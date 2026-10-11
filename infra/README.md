@@ -6,7 +6,7 @@ different lifetimes:
 | Stack | Contents | Lifetime | Approx. cost |
 |---|---|---|---|
 | `terraform/foundation` | Budget + **kill switch**, DVC and MLflow buckets, Artifact Registry, GitHub Workload Identity Federation | Permanent | Cents per month (storage) |
-| `terraform/platform` | GKE Autopilot cluster, Cloud SQL Postgres (prediction log + MLflow backend), workload identities, DB passwords in Secret Manager | **Up for demos only** | Roughly $1–2 per day while up |
+| `terraform/platform` | GKE Autopilot cluster, Cloud SQL Postgres (prediction log + MLflow backend), workload identities, DB passwords in Secret Manager | **Up for demos only** | Roughly $2–3 per day while up |
 
 Costs are rough estimates; check the [GCP pricing calculator](https://cloud.google.com/products/calculator).
 The kill switch exists because estimates can be wrong.
