@@ -1,0 +1,94 @@
+name: CD
+
+# Deploy only after CI has passed on main. A push to main that fails CI is
+# never deployed.
+on:
+  workflow_run:
+    workflows: [ CI ]
+    types: [ completed ]
+    branches: [ main ]
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false  # Never interrupt a rollout halfway
+
+env:
+  IMAGE: us-central1-docker.pkg.dev/ecg-mlops-project/ecg-repo/ecg-api
+  CLUSTER: ecg-cluster
+  REGION: us-central1
+  PROJECT: ecg-mlops-project
+  NAMESPACE: ecg-prod
+
+jobs:
+  build-and-deploy:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: 'read'
+      id-token: 'write' # Required for Google Auth
+
+    steps:
+      - name: Checkout the commit that passed CI
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          lfs: true
+
+      # --- Google Cloud Authentication ---
+      - name: 'Authenticate to Google Cloud'
+        uses: 'google-github-actions/auth@v2'
+        with:
+          credentials_json: '${{ secrets.GCP_SA_KEY }}'
+
+      - name: 'Set up Cloud SDK'
+        uses: 'google-github-actions/setup-gcloud@v2'
+        with:
+          install_components: 'gke-gcloud-auth-plugin'
+
+      - name: 'Configure Docker for Artifact Registry'
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev
+
+      # --- Build & Push ---
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./docker/Dockerfile.api
+          platforms: linux/amd64  # GKE nodes are amd64
+          push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.event.workflow_run.head_sha }}
+
+      # --- Roll out to GKE ---
+      - name: Deploy to GKE
+        run: |
+          gcloud container clusters get-credentials "$CLUSTER" --region "$REGION" --project "$PROJECT"
+          kubectl set image deployment/ecg-api \
+            api="$IMAGE:${{ github.event.workflow_run.head_sha }}" -n "$NAMESPACE"
+          kubectl rollout status deployment/ecg-api -n "$NAMESPACE" --timeout=10m
+
+      # --- Verify the new pods actually serve predictions; roll back if not ---
+      - name: Smoke test
+        run: |
+          kubectl port-forward -n "$NAMESPACE" deploy/ecg-api 8000:8000 >/dev/null 2>&1 &
+          sleep 5
+          curl -fsS http://localhost:8000/ready
+          python3 -c "import json; print(json.dumps({'ecg_signal': [[0.0]*5000]*12}))" > /tmp/ecg.json
+          curl -fsS -X POST http://localhost:8000/predict \
+            -H 'Content-Type: application/json' -d @/tmp/ecg.json > /dev/null
+          echo "Smoke test passed"
+
+      - name: Roll back on failure
+        if: failure()
+        run: |
+          kubectl rollout undo deployment/ecg-api -n "$NAMESPACE" || true
+          kubectl rollout status deployment/ecg-api -n "$NAMESPACE" --timeout=5m || true

@@ -1,7 +1,7 @@
 # ECG Clinical Action Recommender - Production MLOps System
 
 [![CI](https://github.com/heisenberg1804/ECG-Recommender-MLops/actions/workflows/ci.yml/badge.svg)](https://github.com/heisenberg1804/ECG-Recommender-MLops/actions/workflows/ci.yml)
-[![CD](https://github.com/heisenberg1804/ECG-Recommender-MLops/actions/workflows/cd-staging.yml/badge.svg)](https://github.com/heisenberg1804/ECG-Recommender-MLops/actions/workflows/cd-staging.yml)
+[![CD](https://github.com/heisenberg1804/ECG-Recommender-MLops/actions/workflows/cd.yml/badge.svg)](https://github.com/heisenberg1804/ECG-Recommender-MLops/actions/workflows/cd.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 > An end-to-end MLOps system that recommends clinical actions from 12-lead ECG signals, with production-grade monitoring, bias detection, and automated orchestration.
