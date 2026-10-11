@@ -70,7 +70,11 @@ make demo-up                 # ~10-15 min: GKE Autopilot + Cloud SQL
    This builds the API and MLflow images, runs `scripts/deploy_gke.sh`,
    smoke-tests both services, and rolls back if anything fails. After this
    first run, every merge to `main` deploys automatically.
-3. Use it:
+3. `make seed-mlflow`: copies the champion's training run (params, full
+   curves, lineage tags, artifacts) and `ecg-resnet1d@champion` from your local
+   MLflow into the cluster's. Cloud SQL is recreated on every `demo-up`, so
+   without this the cluster's MLflow would start empty. It's safe to re-run.
+4. Use it:
    - API: the URL printed at the end of the deploy (`http://<ip>/docs`)
    - MLflow: `kubectl -n ecg-prod port-forward svc/mlflow 5000:5000`, then
      log training runs to it with `MLFLOW_TRACKING_URI=http://localhost:5000 make train`
