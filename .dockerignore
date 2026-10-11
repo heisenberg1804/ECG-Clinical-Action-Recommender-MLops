@@ -58,3 +58,23 @@ docs/
 # Logs
 *.log
 logs/
+
+# Secrets: never send to the build context
+.env
+.env.*
+*.env
+gcp-key.json
+*-key.json
+
+# Only the promoted champion is baked into the image
+models/*
+!models/best_model.pth
+!models/model_meta.json
+
+# Local tooling / artifacts
+airflow/
+reports/
+scripts/
+docker/
+.dvc/
+.ruff_cache/

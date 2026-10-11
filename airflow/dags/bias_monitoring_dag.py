@@ -9,6 +9,7 @@ Purpose: Monitor fairness across demographic groups and alert via Email if bias 
 """
 
 import asyncio
+import os
 import sys
 from datetime import datetime, timedelta
 
@@ -20,13 +21,17 @@ from airflow import DAG
 # Add src to path
 sys.path.insert(0, "/opt/airflow")
 
+from src.db import postgres_dsn
 from src.monitoring.bias_analyzer import check_bias_and_alert
+
+# Comma-separated list, set in docker/.env.airflow
+ALERT_RECIPIENTS = [e for e in os.getenv("ALERT_EMAIL_TO", "").split(",") if e]
 
 
 def run_bias_analysis(**context):
     """Run bias analysis and return boolean status (True if bias detected)."""
-    # Database connection string
-    db_url = "postgresql://ecg_user:ecg_password_dev@host.docker.internal:5432/ecg_predictions"
+    # Credentials come from the ECG_POSTGRES_* env vars set in docker-compose.airflow.yml
+    db_url = postgres_dsn(prefix="ECG_POSTGRES_")
 
     # Run async analysis
     report = asyncio.run(check_bias_and_alert(db_url))
@@ -63,9 +68,12 @@ def generate_bias_summary(**context):
         sex = report["demographic_parity"]["sex_parity"]
         summary.append("")
         summary.append("Sex Parity:")
+        verdict = "PASS" if sex["passes"] else "FAIL"
         summary.append(f"  Male:   {sex['male_urgent_rate']:.1%} urgent (n={sex['male_count']})")
-        summary.append(f"  Female: {sex['female_urgent_rate']:.1%} urgent (n={sex['female_count']})")
-        summary.append(f"  Ratio:  {sex['parity_ratio']:.3f} ({'PASS' if sex['passes'] else 'FAIL'})")
+        summary.append(
+            f"  Female: {sex['female_urgent_rate']:.1%} urgent (n={sex['female_count']})"
+        )
+        summary.append(f"  Ratio:  {sex['parity_ratio']:.3f} ({verdict})")
 
     summary_text = "\n".join(summary)
     print(summary_text)
@@ -128,7 +136,7 @@ def format_bias_email(**context):
         <h2>🚨 Bias Alert - ECG Clinical Recommender</h2>
         <p><strong>Timestamp:</strong> {report['timestamp']}</p>
         <p><strong>Sample Size:</strong> {report['demographic_parity']['sample_size']}</p>
-        
+
         <h3>⚠️ Warnings:</h3>
         <ul>
         {''.join(f'<li>{w}</li>' for w in report['warnings'])}
@@ -218,11 +226,18 @@ with DAG(
     # 6. Send Email Alert (Only runs if bias detected)
     send_email_alert = EmailOperator(
         task_id='send_email_alert',
-        to=['sahil.s.mohanty@gmail.com'],  # <--- UPDATE THIS EMAIL
+        to=ALERT_RECIPIENTS,
         subject='🚨 Bias Detected - ECG Clinical Recommender',
         html_content="{{ ti.xcom_pull(task_ids='format_email') }}",
     )
 
     # Dependencies:
     # Run analysis -> Log Summary -> Log Metrics -> Check Condition -> Format -> Send
-    analyze_bias >> create_summary >> log_metrics >> check_bias_condition >> format_email >> send_email_alert
+    (
+        analyze_bias
+        >> create_summary
+        >> log_metrics
+        >> check_bias_condition
+        >> format_email
+        >> send_email_alert
+    )

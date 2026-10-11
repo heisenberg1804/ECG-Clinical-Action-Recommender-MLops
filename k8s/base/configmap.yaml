@@ -6,10 +6,10 @@ metadata:
     app: ecg-api
 data:
   # Model settings
-  MODEL_VERSION: "v0.1.0"
   MODEL_PATH: "/app/models/best_model.pth"
   ACTION_MAPPING_PATH: "/app/src/ml/inference/action_mapping.json"
   
-  # Prediction settings
+  # Prediction settings (threshold is a fallback; tuned per-class
+  # thresholds ship with the model in models/model_meta.json)
   PREDICTION_THRESHOLD: "0.3"
   MAX_RECOMMENDATIONS: "5"

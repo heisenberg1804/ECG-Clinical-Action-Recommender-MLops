@@ -2,12 +2,12 @@
 # FILE: src/api/routes/bias.py
 # ============================================================
 """API endpoints for bias monitoring."""
-import os
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from src.db import postgres_dsn
 from src.monitoring.bias_analyzer import check_bias_and_alert
 
 router = APIRouter()
@@ -31,11 +31,7 @@ async def get_bias_status():
 
     Analyzes last 7 days of predictions for fairness across demographics.
     """
-    db_url = f"postgresql://{os.getenv('POSTGRES_USER', 'ecg_user')}:" \
-             f"{os.getenv('POSTGRES_PASSWORD', 'ecg_password_dev')}@" \
-             f"{os.getenv('POSTGRES_HOST', 'localhost')}:" \
-             f"{os.getenv('POSTGRES_PORT', '5432')}/" \
-             f"{os.getenv('POSTGRES_DB', 'ecg_predictions')}"
+    db_url = postgres_dsn()
 
     try:
         report = await check_bias_and_alert(db_url)
@@ -46,7 +42,7 @@ async def get_bias_status():
         return BiasStatus(
             timestamp=report['timestamp'],
             bias_detected=report['bias_detected'],
-            sample_size=report.get('sample_size', 0),
+            sample_size=report['demographic_parity'].get('sample_size', 0),
             sex_parity_passes=sex_passes,
             age_parity_passes=age_passes,
             warnings=report['warnings'],
@@ -64,11 +60,7 @@ async def get_bias_metrics() -> dict[str, Any]:
     """Get detailed bias metrics for dashboard."""
     import numpy as np
 
-    db_url = f"postgresql://{os.getenv('POSTGRES_USER', 'ecg_user')}:" \
-             f"{os.getenv('POSTGRES_PASSWORD', 'ecg_password_dev')}@" \
-             f"{os.getenv('POSTGRES_HOST', 'localhost')}:" \
-             f"{os.getenv('POSTGRES_PORT', '5432')}/" \
-             f"{os.getenv('POSTGRES_DB', 'ecg_predictions')}"
+    db_url = postgres_dsn()
 
     try:
         report = await check_bias_and_alert(db_url)

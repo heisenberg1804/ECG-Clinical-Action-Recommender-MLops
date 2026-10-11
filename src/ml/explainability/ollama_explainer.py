@@ -130,18 +130,10 @@ Do not start with "The ECG shows" or "The model detected"
         leads: list[str],
         time_range: str
     ) -> str:
-        """Fallback explanation if Ollama fails."""
-        lead_str = ", ".join(leads)
+        """Fallback if Ollama fails: same attention-based summary as the rule-based path."""
+        from src.ml.explainability.explainer import ECGExplainer
 
-        fallbacks = {
-            'MI': f"ST segment elevation in leads {lead_str} during {time_range} indicates acute myocardial infarction requiring immediate intervention.",
-            'STTC': f"ST/T wave abnormalities noted in leads {lead_str}. Urgent evaluation recommended to rule out ischemia.",
-            'CD': f"Conduction disturbance detected in leads {lead_str}. Consider underlying structural abnormalities or medication effects.",
-            'HYP': f"Increased voltages in leads {lead_str} meet criteria for ventricular hypertrophy. Echocardiography recommended.",
-            'NORM': "Normal sinus rhythm with no acute abnormalities. All leads within normal limits.",
-        }
-
-        return fallbacks.get(diagnosis, f"Abnormalities detected in leads {lead_str} during interval {time_range}.")
+        return ECGExplainer._describe(diagnosis, leads, time_range)
 
 
 # Singleton instance

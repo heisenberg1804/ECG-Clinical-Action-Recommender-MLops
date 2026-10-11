@@ -136,10 +136,8 @@ class ResNet1D(nn.Module):
                 nn.init.normal_(m.weight, 0, 0.01)
                 nn.init.constant_(m.bias, 0)
 
-    def forward(
-        self, x: torch.Tensor, patient_context: torch.Tensor | None = None
-    ) -> torch.Tensor:
-        # x: (batch, 12, 5000)
+    def forward_features(self, x: torch.Tensor) -> torch.Tensor:
+        """Convolutional trunk: (batch, 12, 5000) -> (batch, 512, T) feature maps."""
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -149,7 +147,12 @@ class ResNet1D(nn.Module):
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.layer4(x)
+        return x
 
+    def forward_head(
+        self, x: torch.Tensor, patient_context: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        """Classification head: feature maps -> (batch, num_classes) logits."""
         x = self.avgpool(x)
         x = torch.flatten(x, 1)  # (batch, 512)
 
@@ -163,6 +166,12 @@ class ResNet1D(nn.Module):
         x = self.fc(x)  # (batch, num_classes)
 
         return x
+
+    def forward(
+        self, x: torch.Tensor, patient_context: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        # x: (batch, 12, 5000)
+        return self.forward_head(self.forward_features(x), patient_context)
 
 
 def resnet18_1d(

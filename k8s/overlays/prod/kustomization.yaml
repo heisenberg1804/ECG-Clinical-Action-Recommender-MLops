@@ -6,7 +6,8 @@ namespace: ecg-prod
 resources:
   - ../../base
 
-patchesJson6902:
+patches:
+- path: service-patch.yaml
 - target:
     group: apps
     version: v1
@@ -82,11 +83,10 @@ patchesJson6902:
       path: /spec/replicas
       value: 0
 
-patches:
-  - path: service-patch.yaml
 
+# Credentials are read from postgres.secret.env (gitignored).
+# Copy postgres.secret.env.example and fill in the Cloud SQL user's password.
 secretGenerator:
 - name: postgres-credentials
-  literals:
-  - username=ecg_user
-  - password=***REMOVED***
+  envs:
+  - postgres.secret.env

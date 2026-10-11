@@ -221,15 +221,6 @@ class ECGDriftDetector:
                 'message': 'Insufficient data',
             }
 
-        # Target features
-        target_features = [
-            'num_diagnoses',
-            'num_recommendations',
-            'max_confidence',
-            'avg_confidence',
-            'primary_diagnosis',
-        ]
-
         column_mapping = ColumnMapping(
             target='primary_diagnosis',
             numerical_features=['num_diagnoses', 'num_recommendations',

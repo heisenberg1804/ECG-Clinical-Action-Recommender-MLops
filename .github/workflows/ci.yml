@@ -6,25 +6,74 @@ on:
   pull_request:
     branches: [ main ]
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build-verification:
+  lint:
     runs-on: ubuntu-latest
-    
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.11'
+
+      - name: Ruff
+        run: uvx ruff@0.14.10 check src tests airflow
+
+  test:
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          lfs: true  # Pulls the actual .pth model file
-      
-      - name: Set up Python
-        uses: actions/setup-python@v5
+          lfs: true  # Tests load the real models/best_model.pth
+
+      - uses: astral-sh/setup-uv@v6
         with:
           python-version: '3.11'
-      
-      - name: Install uv
-        run: curl -LsSf https://astral.sh/uv/install.sh | sh
-      
+          enable-cache: true
+
       - name: Install dependencies
+        run: uv sync --frozen --all-extras
+
+      - name: Run tests
+        run: uv run --frozen pytest --cov=src --cov-report=term-missing
+
+  k8s-manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Render kustomize overlays
         run: |
-          export PATH="$HOME/.local/bin:$PATH"
-          uv sync --all-extras
+          # Prod reads DB credentials from a gitignored file; use the example to render
+          cp k8s/overlays/prod/postgres.secret.env.example k8s/overlays/prod/postgres.secret.env
+          for overlay in staging prod; do
+            echo "::group::$overlay"
+            kubectl kustomize "k8s/overlays/$overlay" > "/tmp/$overlay.yaml"
+            echo "rendered $(grep -c '^kind:' /tmp/$overlay.yaml) resources"
+            echo "::endgroup::"
+          done
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Build only (no push) so a broken Dockerfile fails here, not during deploy
+      - name: Build API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./docker/Dockerfile.api
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

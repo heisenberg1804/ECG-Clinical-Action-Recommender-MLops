@@ -2,11 +2,11 @@
 # FILE: src/api/routes/drift.py
 # ============================================================
 """API endpoints for drift monitoring."""
-import os
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from src.db import postgres_dsn
 from src.monitoring.drift_detector import check_drift_and_alert
 
 router = APIRouter()
@@ -28,11 +28,7 @@ async def get_drift_status():
 
     Compares recent predictions (last 24h) against reference window (last 7 days).
     """
-    db_url = f"postgresql://{os.getenv('POSTGRES_USER', 'ecg_user')}:" \
-             f"{os.getenv('POSTGRES_PASSWORD', 'ecg_password_dev')}@" \
-             f"{os.getenv('POSTGRES_HOST', 'localhost')}:" \
-             f"{os.getenv('POSTGRES_PORT', '5432')}/" \
-             f"{os.getenv('POSTGRES_DB', 'ecg_predictions')}"
+    db_url = postgres_dsn()
 
     try:
         summary = await check_drift_and_alert(db_url, threshold=0.1)
@@ -55,11 +51,7 @@ async def get_drift_status():
 @router.get("/drift/metrics")
 async def get_drift_metrics():
     """Get detailed drift metrics for monitoring dashboard."""
-    db_url = f"postgresql://{os.getenv('POSTGRES_USER', 'ecg_user')}:" \
-             f"{os.getenv('POSTGRES_PASSWORD', 'ecg_password_dev')}@" \
-             f"{os.getenv('POSTGRES_HOST', 'localhost')}:" \
-             f"{os.getenv('POSTGRES_PORT', '5432')}/" \
-             f"{os.getenv('POSTGRES_DB', 'ecg_predictions')}"
+    db_url = postgres_dsn()
 
     try:
         summary = await check_drift_and_alert(db_url, threshold=0.1)

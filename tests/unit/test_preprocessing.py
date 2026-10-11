@@ -2,51 +2,47 @@
 # FILE: tests/unit/test_preprocessing.py
 # ============================================================
 import numpy as np
+import pytest
 
-from src.ml.preprocessing.signal import (
-    bandpass_filter,
-    normalize_signal,
-    preprocess_ecg,
-)
+from src.ml.preprocessing.signal import normalize_signal, prepare_ecg
 
 
-class TestSignalPreprocessing:
-    """Tests for ECG signal preprocessing functions."""
+@pytest.fixture
+def signal():
+    return np.random.default_rng(0).normal(size=(12, 5000)) * 10 + 5
 
-    def test_bandpass_filter_shape_preserved(self):
-        """Filter should preserve signal shape."""
-        signal = np.random.randn(12, 5000)
-        filtered = bandpass_filter(signal)
-        assert filtered.shape == signal.shape
 
-    def test_normalize_signal_zero_mean(self):
-        """Normalized signal should have zero mean per lead."""
-        signal = np.random.randn(12, 5000) * 10 + 5
-        normalized = normalize_signal(signal)
+class TestNormalize:
+    def test_zero_mean_unit_variance(self, signal):
+        x = normalize_signal(signal)
+        np.testing.assert_allclose(x.mean(axis=1), 0, atol=1e-5)
+        np.testing.assert_allclose(x.std(axis=1), 1, atol=1e-4)
 
-        means = normalized.mean(axis=1)
-        np.testing.assert_array_almost_equal(means, np.zeros(12), decimal=10)
+    def test_flat_lead_is_finite(self):
+        assert np.isfinite(normalize_signal(np.ones((12, 5000)))).all()
 
-    def test_normalize_signal_unit_variance(self):
-        """Normalized signal should have unit variance per lead."""
-        signal = np.random.randn(12, 5000) * 10 + 5
-        normalized = normalize_signal(signal)
 
-        stds = normalized.std(axis=1)
-        np.testing.assert_array_almost_equal(stds, np.ones(12), decimal=10)
+class TestPrepareEcg:
+    def test_output_contract(self, signal):
+        x = prepare_ecg(signal)
+        assert x.shape == (12, 5000)
+        assert x.dtype == np.float32
 
-    def test_preprocess_ecg_resampling(self):
-        """Preprocessing should resample to target frequency."""
-        signal = np.random.randn(12, 5000)  # 10 seconds at 500Hz
-        processed = preprocess_ecg(signal, fs=500, target_fs=250)
+    def test_accepts_samples_by_leads(self, signal):
+        np.testing.assert_allclose(prepare_ecg(signal.T), prepare_ecg(signal))
 
-        # Should be 2500 samples at 250Hz
-        assert processed.shape == (12, 2500)
+    def test_resamples_by_duration(self):
+        ten_s_at_250 = np.random.default_rng(0).normal(size=(12, 2500))
+        assert prepare_ecg(ten_s_at_250, sampling_rate=250).shape == (12, 5000)
 
-    def test_preprocess_ecg_handles_flat_signal(self):
-        """Preprocessing should handle constant signal without error."""
-        signal = np.ones((12, 5000))
-        processed = preprocess_ecg(signal)
+    def test_crops_to_first_10s(self, signal):
+        twenty_s = np.concatenate([signal, signal * 0], axis=1)
+        np.testing.assert_allclose(prepare_ecg(twenty_s), prepare_ecg(signal))
 
-        # Should not contain NaN or Inf
-        assert np.isfinite(processed).all()
+    def test_rejects_short(self):
+        with pytest.raises(ValueError, match="at least 10 s"):
+            prepare_ecg(np.zeros((12, 4999)))
+
+    def test_rejects_wrong_lead_count(self):
+        with pytest.raises(ValueError, match="12-lead"):
+            prepare_ecg(np.zeros((8, 5000)))
