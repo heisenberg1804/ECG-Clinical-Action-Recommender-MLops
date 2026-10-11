@@ -9,6 +9,7 @@ locals {
     "cloudbilling.googleapis.com",
     "cloudbuild.googleapis.com",
     "cloudfunctions.googleapis.com",
+    "cloudresourcemanager.googleapis.com", # Bootstrapped by `make foundation`; managed here after
     "container.googleapis.com",
     "eventarc.googleapis.com",
     "iam.googleapis.com",
@@ -17,6 +18,7 @@ locals {
     "pubsub.googleapis.com",
     "run.googleapis.com",
     "secretmanager.googleapis.com",
+    "serviceusage.googleapis.com", # Bootstrapped by `make foundation`; managed here after
     "sqladmin.googleapis.com",
     "storage.googleapis.com",
     "sts.googleapis.com",

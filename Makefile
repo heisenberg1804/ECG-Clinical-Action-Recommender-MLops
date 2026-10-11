@@ -30,7 +30,14 @@ mlflow:  ## MLflow UI on :5001
 
 # ---------------- Cloud (see infra/README.md) ----------------
 .PHONY: foundation demo-up deploy demo-down inventory
+# Terraform bills its own API calls to the project (needed for the Budgets API),
+# so on a fresh project these must be on before Terraform can do anything
+BOOTSTRAP_APIS := cloudresourcemanager.googleapis.com serviceusage.googleapis.com \
+	cloudbilling.googleapis.com billingbudgets.googleapis.com
+
 foundation:  ## Apply the long-lived stack (budget kill switch, buckets, registry, WIF)
+	@test -n "$(PROJECT)" || { echo "Set project_id in infra/terraform/foundation/terraform.tfvars"; exit 1; }
+	gcloud services enable $(BOOTSTRAP_APIS) --project $(PROJECT)
 	$(TF)/foundation init -input=false
 	$(TF)/foundation apply
 

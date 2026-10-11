@@ -1,5 +1,5 @@
 # Copy to terraform.tfvars (gitignored) and fill in.
 project_id      = "ecg-mlops-xxxx"
 billing_account = "XXXXXX-XXXXXX-XXXXXX"
-budget_usd      = 15
+budget_usd      = 10
 alert_emails    = ["you@example.com"]

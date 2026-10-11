@@ -17,7 +17,7 @@ variable "billing_account" {
 variable "budget_usd" {
   description = "Monthly budget. At 100% of actual spend the kill switch unlinks billing."
   type        = number
-  default     = 15
+  default     = 10 # Interview demos cost ~$0.35 each; this still leaves room for a forgotten weekend
 }
 
 variable "alert_emails" {
