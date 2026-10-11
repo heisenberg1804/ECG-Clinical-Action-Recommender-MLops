@@ -90,3 +90,6 @@ docker/.env.airflow
 # Local LLM weights (multi-GB)
 *.gguf
 models/llm/
+
+# Training outputs (tracked in MLflow; promoted weights go to models/best_model.pth)
+models/runs/

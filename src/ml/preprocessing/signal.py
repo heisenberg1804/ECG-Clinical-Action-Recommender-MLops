@@ -1,88 +1,71 @@
 # ============================================================
 # FILE: src/ml/preprocessing/signal.py
 # ============================================================
+"""
+ECG preprocessing shared by training and serving.
+
+Both the training dataset and the inference predictor call prepare_ecg(),
+so there is exactly one definition of what the model sees (no train/serve skew).
+"""
 import numpy as np
-from scipy import signal as scipy_signal
+from scipy.signal import resample
 
-
-def bandpass_filter(
-    ecg_signal: np.ndarray,
-    lowcut: float = 0.5,
-    highcut: float = 40.0,
-    fs: int = 500,
-    order: int = 4,
-) -> np.ndarray:
-    """
-    Apply bandpass filter to remove noise from ECG signal.
-
-    Args:
-        ecg_signal: ECG signal array, shape (n_leads, n_samples)
-        lowcut: Low frequency cutoff (Hz)
-        highcut: High frequency cutoff (Hz)
-        fs: Sampling frequency (Hz)
-        order: Filter order
-
-    Returns:
-        Filtered ECG signal
-    """
-    nyq = 0.5 * fs
-    low = lowcut / nyq
-    high = highcut / nyq
-
-    b, a = scipy_signal.butter(order, [low, high], btype="band")
-
-    filtered = np.zeros_like(ecg_signal)
-    for i in range(ecg_signal.shape[0]):
-        filtered[i] = scipy_signal.filtfilt(b, a, ecg_signal[i])
-
-    return filtered
+TARGET_FS = 500  # Hz the model is trained on
+TARGET_SAMPLES = 5000  # 10 s at 500 Hz
+N_LEADS = 12
 
 
 def normalize_signal(ecg_signal: np.ndarray) -> np.ndarray:
     """
-    Normalize ECG signal to zero mean and unit variance per lead.
+    Z-score each lead independently.
 
     Args:
         ecg_signal: ECG signal array, shape (n_leads, n_samples)
 
     Returns:
-        Normalized ECG signal
+        Normalized float32 signal; flat leads become all zeros
     """
     mean = ecg_signal.mean(axis=1, keepdims=True)
     std = ecg_signal.std(axis=1, keepdims=True)
-    std = np.where(std == 0, 1, std)  # Avoid division by zero
-
-    return (ecg_signal - mean) / std
+    return ((ecg_signal - mean) / (std + 1e-8)).astype(np.float32)
 
 
-def preprocess_ecg(
-    ecg_signal: np.ndarray,
-    fs: int = 500,
-    target_fs: int = 250,
-) -> np.ndarray:
+def prepare_ecg(ecg_signal: np.ndarray, sampling_rate: int = TARGET_FS) -> np.ndarray:
     """
-    Full preprocessing pipeline for ECG signal.
+    Convert a raw 12-lead ECG into the model's input format.
+
+    Steps: orient to (12, n) -> resample to 500 Hz by duration -> take the
+    first 10 s -> per-lead z-score.
 
     Args:
-        ecg_signal: Raw ECG signal, shape (n_leads, n_samples)
-        fs: Original sampling frequency
-        target_fs: Target sampling frequency
+        ecg_signal: Raw ECG, shape (12, n_samples) or (n_samples, 12)
+        sampling_rate: Sampling rate of ecg_signal in Hz
 
     Returns:
-        Preprocessed ECG signal
+        float32 array of shape (12, 5000)
+
+    Raises:
+        ValueError: If the signal is not 12-lead, contains NaN/inf,
+                    or is shorter than 10 seconds
     """
-    # 1. Bandpass filter
-    filtered = bandpass_filter(ecg_signal, fs=fs)
+    ecg_signal = np.asarray(ecg_signal, dtype=np.float32)
+    if ecg_signal.ndim != 2 or N_LEADS not in ecg_signal.shape:
+        raise ValueError(f"Expected a 12-lead signal, got shape {ecg_signal.shape}")
+    if not np.isfinite(ecg_signal).all():
+        raise ValueError("ECG signal contains NaN or infinite values")
 
-    # 2. Resample if needed
-    if fs != target_fs:
-        num_samples = int(filtered.shape[1] * target_fs / fs)
-        resampled = np.zeros((filtered.shape[0], num_samples))
-        for i in range(filtered.shape[0]):
-            resampled[i] = scipy_signal.resample(filtered[i], num_samples)
-        filtered = resampled
+    if ecg_signal.shape[0] != N_LEADS:
+        ecg_signal = ecg_signal.T
 
-    # 3. Normalize
-    normalized = normalize_signal(filtered)
+    if sampling_rate != TARGET_FS:
+        n_out = round(ecg_signal.shape[1] * TARGET_FS / sampling_rate)
+        ecg_signal = resample(ecg_signal, n_out, axis=1)
 
-    return normalized
+    if ecg_signal.shape[1] < TARGET_SAMPLES:
+        duration_s = ecg_signal.shape[1] / TARGET_FS
+        raise ValueError(
+            f"ECG must be at least 10 s long; got {duration_s:.2f} s "
+            f"({ecg_signal.shape[1]} samples at {TARGET_FS} Hz after resampling)"
+        )
+
+    return normalize_signal(ecg_signal[:, :TARGET_SAMPLES])

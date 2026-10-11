@@ -21,9 +21,8 @@ import torch
 import torch.nn as nn
 
 from src.ml.models.resnet1d import resnet18_1d
+from src.ml.preprocessing.signal import TARGET_FS, prepare_ecg
 
-TARGET_FS = 500  # Hz the model was trained on
-TARGET_SAMPLES = 5000  # 10 s at 500 Hz
 DEFAULT_THRESHOLD = float(os.getenv("PREDICTION_THRESHOLD", "0.3"))
 DEFAULT_TOP_K = int(os.getenv("MAX_RECOMMENDATIONS", "5"))
 
@@ -74,10 +73,14 @@ class ClinicalActionPredictor:
         # Load model
         self.superclasses = ['NORM', 'MI', 'STTC', 'CD', 'HYP']
         self.model_version = os.getenv("MODEL_VERSION", "")
+        self.weights_digest = ""
         self.model = self._load_model()
 
         # Load action mapping
         self.action_mapping = self._load_action_mapping()
+
+        # Per-class thresholds tuned on the validation fold, if the model ships with them
+        self.thresholds = self._load_thresholds()
 
     def _load_model(self) -> nn.Module:
         """Load trained model from file or MLflow Registry."""
@@ -116,10 +119,10 @@ class ClinicalActionPredictor:
             model.load_state_dict(state_dict)
             model = model.to(self.device)
             model.eval()
+            # Tie every logged prediction to the exact weights that produced it
+            self.weights_digest = hashlib.sha256(self.model_path.read_bytes()).hexdigest()[:12]
             if not self.model_version or self.model_version == "latest":
-                # Tie every logged prediction to the exact weights that produced it
-                digest = hashlib.sha256(self.model_path.read_bytes()).hexdigest()[:12]
-                self.model_version = f"resnet18-{digest}"
+                self.model_version = f"resnet18-{self.weights_digest}"
             print(f"✅ Model loaded from file ({self.model_version})")
             return model
 
@@ -128,6 +131,17 @@ class ClinicalActionPredictor:
             f"MLflow Registry ({self.model_name}), "
             f"File path ({self.model_path})"
         )
+
+    def _load_thresholds(self) -> dict[str, float]:
+        """Read thresholds from model_meta.json next to the weights; fall back to a global one."""
+        meta_path = self.model_path.with_name("model_meta.json") if self.model_path else None
+        if meta_path and meta_path.exists():
+            meta = json.loads(meta_path.read_text())
+            if meta.get("model_version") == f"resnet18-{self.weights_digest}":
+                print(f"✅ Using tuned thresholds from {meta_path.name}")
+                return {c: float(meta["thresholds"][c]) for c in self.superclasses}
+            print(f"⚠️  {meta_path.name} does not match the loaded weights; ignoring it")
+        return dict.fromkeys(self.superclasses, DEFAULT_THRESHOLD)
 
     def _load_action_mapping(self) -> dict[str, list[dict[str, str]]]:
         """Load diagnostic → action mapping."""
@@ -141,11 +155,7 @@ class ClinicalActionPredictor:
         self, signal: np.ndarray, sampling_rate: int = TARGET_FS
     ) -> torch.Tensor:
         """
-        Preprocess ECG signal to match training: 500 Hz, 10 s, per-lead z-score.
-
-        Args:
-            signal: ECG signal, shape (12, num_samples) or (num_samples, 12)
-            sampling_rate: Sampling rate of `signal` in Hz
+        Preprocess ECG signal exactly as during training (see prepare_ecg).
 
         Returns:
             Preprocessed tensor, shape (1, 12, 5000)
@@ -153,46 +163,13 @@ class ClinicalActionPredictor:
         Raises:
             ValueError: If the signal is malformed or shorter than 10 seconds
         """
-        signal = np.asarray(signal, dtype=np.float32)
-        if signal.ndim != 2 or 12 not in signal.shape:
-            raise ValueError(f"Expected a 12-lead signal, got shape {signal.shape}")
-        if not np.isfinite(signal).all():
-            raise ValueError("ECG signal contains NaN or infinite values")
-
-        # Ensure correct shape (12, num_samples)
-        if signal.shape[0] != 12:
-            signal = signal.T
-
-        # Resample by duration so time scale matches training (500 Hz)
-        if sampling_rate != TARGET_FS:
-            from scipy.signal import resample
-            n_out = round(signal.shape[1] * TARGET_FS / sampling_rate)
-            signal = resample(signal, n_out, axis=1)
-
-        duration_s = signal.shape[1] / TARGET_FS
-        if signal.shape[1] < TARGET_SAMPLES:
-            raise ValueError(
-                f"ECG must be at least 10 s long; got {duration_s:.2f} s "
-                f"({signal.shape[1]} samples at {TARGET_FS} Hz after resampling)"
-            )
-        # The model was trained on 10 s strips; use the first 10 s
-        signal = signal[:, :TARGET_SAMPLES]
-
-        # Normalize per lead (z-score)
-        signal = (signal - signal.mean(axis=1, keepdims=True)) / (
-            signal.std(axis=1, keepdims=True) + 1e-8
-        )
-
-        # Convert to tensor and add batch dimension
-        signal_tensor = torch.from_numpy(signal.astype(np.float32)).unsqueeze(0)
-
-        return signal_tensor
+        return torch.from_numpy(prepare_ecg(signal, sampling_rate)).unsqueeze(0)
 
     def predict(
         self,
         signal: np.ndarray,
         sampling_rate: int = TARGET_FS,
-        threshold: float = DEFAULT_THRESHOLD,
+        threshold: float | None = None,
         top_k: int = DEFAULT_TOP_K,
         explain: bool = False,
         use_llm: bool = False,
@@ -205,7 +182,7 @@ class ClinicalActionPredictor:
         Args:
             signal: ECG signal, shape (12, num_samples) or (num_samples, 12)
             sampling_rate: Sampling rate of `signal` in Hz
-            threshold: Probability threshold for diagnosis prediction
+            threshold: Override for all classes; defaults to the per-class tuned thresholds
             top_k: Return top K recommendations
             explain: If True, generate explanation for top prediction
             use_llm: If True, ask the local LLM to phrase the explanation
@@ -219,6 +196,10 @@ class ClinicalActionPredictor:
                 - recommendations: List of recommended clinical actions
                 - explanation: (optional) Explanation for top diagnosis
         """
+        thresholds = (
+            self.thresholds if threshold is None else dict.fromkeys(self.superclasses, threshold)
+        )
+
         # Preprocess
         signal_tensor = self.preprocess_signal(signal, sampling_rate).to(self.device)
 
@@ -230,7 +211,7 @@ class ClinicalActionPredictor:
         # Get predicted diagnoses
         diagnoses = []
         for i, (sc, prob) in enumerate(zip(self.superclasses, probs)):
-            if prob > threshold:
+            if prob > thresholds[sc]:
                 diagnoses.append({
                     'diagnosis': sc,
                     'confidence': float(prob),
@@ -264,9 +245,7 @@ class ClinicalActionPredictor:
                 'action': 'Manual ECG review recommended',
                 'confidence': float(1.0 - probs.max()),
                 'urgency': 'routine',
-                'reasoning': (
-                    f'No diagnostic class exceeded the {threshold:.2f} confidence threshold'
-                ),
+                'reasoning': 'No diagnostic class exceeded its confidence threshold',
             }]
 
         # Sort by urgency (immediate > urgent > routine), then by confidence
