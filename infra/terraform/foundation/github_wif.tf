@@ -5,7 +5,7 @@ resource "google_iam_workload_identity_pool" "github" {
   workload_identity_pool_id = "github"
   display_name              = "GitHub Actions"
 
-  depends_on = [google_project_service.enabled]
+  depends_on = [time_sleep.apis_ready]
 }
 
 resource "google_iam_workload_identity_pool_provider" "github" {
@@ -27,6 +27,8 @@ resource "google_iam_workload_identity_pool_provider" "github" {
 resource "google_service_account" "github_deployer" {
   account_id   = "github-deployer"
   display_name = "GitHub Actions CD"
+
+  depends_on = [time_sleep.apis_ready]
 }
 
 resource "google_service_account_iam_member" "github_impersonation" {
