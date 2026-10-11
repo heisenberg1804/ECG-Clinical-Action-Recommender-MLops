@@ -92,6 +92,14 @@ resource "google_secret_manager_secret" "db_password" {
   }
 }
 
+# CD (scripts/deploy_gke.sh) copies these into k8s Secrets at deploy time
+resource "google_secret_manager_secret_iam_member" "deployer_reads_db_password" {
+  for_each  = local.databases
+  secret_id = google_secret_manager_secret.db_password[each.key].id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:github-deployer@${var.project_id}.iam.gserviceaccount.com"
+}
+
 resource "google_secret_manager_secret_version" "db_password" {
   for_each    = local.databases
   secret      = google_secret_manager_secret.db_password[each.key].id
@@ -104,7 +112,7 @@ resource "google_secret_manager_secret_version" "db_password" {
 locals {
   workloads = {
     # KSA name in k8s/overlays/prod -> roles
-    ecg-api = { ksa = "ecg-sql-proxy", roles = ["roles/cloudsql.client"] }
+    ecg-api = { ksa = "ecg-api", roles = ["roles/cloudsql.client"] }
     mlflow  = { ksa = "mlflow", roles = ["roles/cloudsql.client"] }
   }
   workload_roles = merge([

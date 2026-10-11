@@ -13,7 +13,7 @@ from prometheus_client import Counter, Gauge, Histogram
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from src.db import postgres_dsn
+from src.db import ensure_schema, postgres_dsn
 from src.ml.inference.predictor import get_predictor
 
 router = APIRouter()
@@ -57,6 +57,8 @@ async def get_db_pool():
             max_size=10,
             timeout=5,  # Fail fast: logging must never stall a prediction
         )
+        async with DB_POOL.acquire() as conn:
+            await ensure_schema(conn)
     return DB_POOL
 
 

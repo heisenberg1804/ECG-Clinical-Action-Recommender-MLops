@@ -1,0 +1,30 @@
+# Cloud SQL and GCS replace these in prod
+$patch: delete
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+---
+$patch: delete
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+---
+$patch: delete
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+---
+$patch: delete
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+---
+$patch: delete
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mlflow-artifacts

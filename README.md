@@ -196,9 +196,11 @@ maps straight to "Activate cath lab".
 
 ## Deployment
 
-The Kubernetes manifests (`k8s/`, kustomize base plus staging and prod
-overlays) target GKE, with Cloud SQL through the auth proxy and images in
-Artifact Registry.
+Kubernetes manifests (`k8s/`) come in two flavours: a self-contained local
+stack (API, Postgres, MLflow) for minikube, and a GKE overlay that swaps in
+Cloud SQL (through the Auth Proxy) and GCS, with Workload Identity throughout.
+MLflow on GKE uses Cloud SQL as its backend store and GCS for artifacts.
+Infrastructure is Terraform (`infra/`); see [infra/README.md](infra/README.md).
 
 **Current status: torn down.** The original GCP project was shut down to stop
 idle costs. It's being rebuilt with Terraform as *ephemeral* infrastructure:
@@ -224,7 +226,8 @@ src/
   db.py                 env-driven Postgres DSN
 scripts/                train, promote, gcp_inventory, monitoring CLIs
 airflow/dags/           drift (hourly) and bias (daily) monitoring
-k8s/                    kustomize base + overlays
+k8s/                    kustomize: base (local stack) + prod overlay (GKE)
+infra/                  Terraform: foundation (cost guardrails) + platform (GKE, Cloud SQL)
 docker/                 API image, local compose stacks
 tests/unit/             API, inference, explainability, training, preprocessing
 ```

@@ -47,3 +47,10 @@ resource "google_project_iam_member" "deployer_gke" {
   role    = "roles/container.developer"
   member  = "serviceAccount:${google_service_account.github_deployer.email}"
 }
+
+# deploy_gke.sh discovers the Cloud SQL connection name
+resource "google_project_iam_member" "deployer_sql_discovery" {
+  project = var.project_id
+  role    = "roles/cloudsql.viewer"
+  member  = "serviceAccount:${google_service_account.github_deployer.email}"
+}

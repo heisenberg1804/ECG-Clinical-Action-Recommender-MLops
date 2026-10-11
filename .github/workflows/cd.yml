@@ -7,6 +7,8 @@ on:
     workflows: [ CI ]
     types: [ completed ]
     branches: [ main ]
+  # Manual "Run workflow" button: the first deploy after `make demo-up`
+  workflow_dispatch:
 
 concurrency:
   group: deploy-prod
@@ -17,9 +19,9 @@ concurrency:
 env:
   PROJECT: ${{ vars.GCP_PROJECT_ID }}
   REGION: us-central1
-  IMAGE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/ecg-repo/ecg-api
-  CLUSTER: ecg-cluster
+  REGISTRY: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/ecg-repo
   NAMESPACE: ecg-prod
+  TAG: ${{ github.event.workflow_run.head_sha || github.sha }}
 
 jobs:
   build-and-deploy:
@@ -27,8 +29,10 @@ jobs:
     # Actions -> Variables). Set it to true only while the platform stack is up.
     if: >-
       vars.DEPLOY_ENABLED == 'true' &&
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push'
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push'))
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -39,7 +43,7 @@ jobs:
       - name: Checkout the commit that passed CI
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ env.TAG }}
           lfs: true
 
       # --- Keyless auth: GitHub OIDC token -> Workload Identity Federation ---
@@ -61,26 +65,35 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push
+      - name: Build and push API image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./docker/Dockerfile.api
           platforms: linux/amd64  # GKE nodes are amd64
           push: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
           tags: |
-            ${{ env.IMAGE }}:latest
-            ${{ env.IMAGE }}:${{ github.event.workflow_run.head_sha }}
+            ${{ env.REGISTRY }}/ecg-api:latest
+            ${{ env.REGISTRY }}/ecg-api:${{ env.TAG }}
 
-      # --- Roll out to GKE ---
+      - name: Build and push MLflow image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./docker/Dockerfile.mlflow
+          platforms: linux/amd64
+          push: true
+          cache-from: type=gha,scope=mlflow
+          cache-to: type=gha,mode=max,scope=mlflow
+          tags: |
+            ${{ env.REGISTRY }}/ecg-mlflow:latest
+            ${{ env.REGISTRY }}/ecg-mlflow:${{ env.TAG }}
+
+      # --- Roll out: same script as a manual deploy (manifests, secrets, images) ---
       - name: Deploy to GKE
-        run: |
-          gcloud container clusters get-credentials "$CLUSTER" --region "$REGION" --project "$PROJECT"
-          kubectl set image deployment/ecg-api \
-            api="$IMAGE:${{ github.event.workflow_run.head_sha }}" -n "$NAMESPACE"
-          kubectl rollout status deployment/ecg-api -n "$NAMESPACE" --timeout=10m
+        run: scripts/deploy_gke.sh "$PROJECT" "$TAG"
 
       # --- Verify the new pods actually serve predictions; roll back if not ---
       - name: Smoke test
@@ -91,10 +104,15 @@ jobs:
           python3 -c "import json; print(json.dumps({'ecg_signal': [[0.0]*5000]*12}))" > /tmp/ecg.json
           curl -fsS -X POST http://localhost:8000/predict \
             -H 'Content-Type: application/json' -d @/tmp/ecg.json > /dev/null
+          kubectl port-forward -n "$NAMESPACE" svc/mlflow 5000:5000 >/dev/null 2>&1 &
+          sleep 5
+          curl -fsS http://localhost:5000/health
           echo "Smoke test passed"
 
       - name: Roll back on failure
         if: failure()
         run: |
-          kubectl rollout undo deployment/ecg-api -n "$NAMESPACE" || true
-          kubectl rollout status deployment/ecg-api -n "$NAMESPACE" --timeout=5m || true
+          for d in ecg-api mlflow; do
+            kubectl rollout undo "deployment/$d" -n "$NAMESPACE" || true
+            kubectl rollout status "deployment/$d" -n "$NAMESPACE" --timeout=5m || true
+          done

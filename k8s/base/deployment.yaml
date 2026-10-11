@@ -4,9 +4,8 @@ metadata:
   name: ecg-api
   labels:
     app: ecg-api
-    version: v0.1.2  # Updated this too!
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: ecg-api
@@ -14,66 +13,60 @@ spec:
     metadata:
       labels:
         app: ecg-api
-        version: v0.1.2  # Updated this too!
     spec:
+      serviceAccountName: ecg-api
       containers:
       - name: api
-        image: ecg-api:v0.1.2
+        image: ecg-api:local  # Built into the local cluster by scripts/deploy-minikube.sh
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000
           name: http
         env:
-        - name: ENVIRONMENT
-          value: "development"
-        - name: LOG_LEVEL
-          value: "INFO"
-        - name: MLFLOW_MODEL_NAME
-          value: "ecg-clinical-recommender"  # Add this!
-        - name: MLFLOW_TRACKING_URI
-          value: "http://mlflow.ecg-dev.svc.cluster.local:5000"  # Add this!
         - name: POSTGRES_HOST
-          value: "postgres"
+          value: postgres
         - name: POSTGRES_PORT
           value: "5432"
         - name: POSTGRES_DB
-          valueFrom:
-            configMapKeyRef:
-              name: postgres-config
-              key: POSTGRES_DB
+          value: ecg_predictions
         - name: POSTGRES_USER
           valueFrom:
-            configMapKeyRef:
-              name: postgres-config
-              key: POSTGRES_USER
+            secretKeyRef:
+              name: ecg-db
+              key: username
         - name: POSTGRES_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: postgres-secret
-              key: POSTGRES_PASSWORD
+              name: ecg-db
+              key: password
+        - name: DISABLE_LLM_EXPLANATIONS
+          value: "true"
         envFrom:
         - configMapRef:
             name: ecg-api-config
+        # Requests == limits: predictable on Autopilot, which bills by request
         resources:
           requests:
-            memory: "512Mi"
-            cpu: "500m"
+            cpu: 500m
+            memory: 1Gi
           limits:
-            memory: "2Gi"
-            cpu: "2000m"
+            cpu: 500m
+            memory: 1Gi
+        startupProbe:
+          httpGet:
+            path: /ready
+            port: http
+          periodSeconds: 5
+          failureThreshold: 30  # Up to 150 s to load torch + the model
         livenessProbe:
           httpGet:
             path: /health
-            port: 8000
-          initialDelaySeconds: 30
-          periodSeconds: 10
+            port: http
+          periodSeconds: 15
           timeoutSeconds: 5
-          failureThreshold: 3
         readinessProbe:
           httpGet:
             path: /ready
-            port: 8000
-          initialDelaySeconds: 20
-          periodSeconds: 5
+            port: http
+          periodSeconds: 10
           timeoutSeconds: 3
-          failureThreshold: 3

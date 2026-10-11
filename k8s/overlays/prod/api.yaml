@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ecg-api
+spec:
+  template:
+    spec:
+      initContainers:
+      # Native sidecar (restartPolicy: Always): starts before the API and stops
+      # after it, so the DB tunnel is ready at startup and outlives shutdown
+      - name: cloud-sql-proxy
+        image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.25.4
+        restartPolicy: Always
+        args: ["--structured-logs", "--port=5432", "${SQL_CONNECTION}"]
+        securityContext:
+          runAsNonRoot: true
+        resources:
+          requests: {cpu: 100m, memory: 128Mi}
+          limits: {cpu: 100m, memory: 128Mi}
+      containers:
+      - name: api
+        image: ${API_IMAGE}
+        imagePullPolicy: Always
+        env:
+        - name: POSTGRES_HOST
+          value: "127.0.0.1"
+        - name: ENVIRONMENT
+          value: production

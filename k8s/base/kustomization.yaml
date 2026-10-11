@@ -1,18 +1,16 @@
+# Base: a self-contained stack for local clusters (minikube / kind):
+# API + in-cluster Postgres + MLflow. The prod overlay swaps Postgres for
+# Cloud SQL and local storage for GCS.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-resources:
-  - namespace.yaml
-  - configmap.yaml
-  - deployment.yaml
-  - service.yaml
-  # - servicemonitor.yaml
-  - postgres.yaml  # Add this
-  - mlflow.yaml
-  - serviceaccount.yaml 
-
 namespace: ecg-dev
 
-# commonLabels:
-#   app: ecg-api
-#   project: ecg-recommender
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - configmap.yaml
+  - postgres.yaml
+  - mlflow.yaml
+  - deployment.yaml
+  - service.yaml

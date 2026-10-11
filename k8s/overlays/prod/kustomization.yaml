@@ -1,3 +1,9 @@
+# GKE overlay: Cloud SQL (via the Auth Proxy) instead of in-cluster Postgres,
+# GCS instead of local volumes, Workload Identity on the service accounts.
+#
+# ${...} placeholders are filled in at deploy time by scripts/deploy_gke.sh,
+# which discovers them with gcloud, so no project-specific values live in git.
+# The ecg-db and mlflow-db Secrets are created by that script from Secret Manager.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -7,86 +13,8 @@ resources:
   - ../../base
 
 patches:
-- path: service-patch.yaml
-- target:
-    group: apps
-    version: v1
-    kind: Deployment
-    name: ecg-api
-  patch: |-
-    - op: replace
-      path: /spec/replicas
-      value: 2
-    - op: replace
-      path: /spec/template/spec/serviceAccountName
-      value: ecg-sql-proxy
-    - op: replace
-      path: /spec/template/spec/containers/0/image
-      value: us-central1-docker.pkg.dev/ecg-mlops-project/ecg-repo/ecg-api:v0.2.1
-    - op: replace
-      path: /spec/template/spec/containers/0/imagePullPolicy
-      value: Always
-    # ✅ TIMEOUTS: Adjusted to safe values for smaller image
-    - op: replace
-      path: /spec/template/spec/containers/0/livenessProbe/initialDelaySeconds
-      value: 60
-    - op: replace
-      path: /spec/template/spec/containers/0/readinessProbe/initialDelaySeconds
-      value: 60
-    - op: replace
-      path: /spec/template/spec/containers/0/env
-      value:
-        - name: ENVIRONMENT
-          value: "production"
-        - name: LOG_LEVEL
-          value: "INFO"
-        - name: POSTGRES_HOST
-          value: "127.0.0.1"
-        - name: POSTGRES_PORT
-          value: "5432"
-        - name: POSTGRES_USER
-          valueFrom:
-            secretKeyRef:
-              name: postgres-credentials
-              key: username
-        - name: POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: postgres-credentials
-              key: password
-        - name: POSTGRES_DB
-          value: "ecg_predictions"
-        - name: DISABLE_LLM_EXPLANATIONS
-          value: "true"
-    - op: add
-      path: /spec/template/spec/containers/-
-      value:
-        name: cloudsql-proxy
-        image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:latest
-        args:
-          - "--structured-logs"
-          - "--port=5432"
-          - "ecg-mlops-project:us-central1:ecg-postgres"
-        securityContext:
-          runAsNonRoot: true
-        resources:
-          requests:
-            memory: "256Mi"
-            cpu: "100m"
-- target:
-    group: apps
-    version: v1
-    kind: Deployment
-    name: postgres
-  patch: |-
-    - op: replace
-      path: /spec/replicas
-      value: 0
-
-
-# Credentials are read from postgres.secret.env (gitignored).
-# Copy postgres.secret.env.example and fill in the Cloud SQL user's password.
-secretGenerator:
-- name: postgres-credentials
-  envs:
-  - postgres.secret.env
+  - path: remove-local-stack.yaml
+  - path: serviceaccounts.yaml
+  - path: api.yaml
+  - path: mlflow.yaml
+  - path: service-patch.yaml

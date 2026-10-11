@@ -1,0 +1,16 @@
+# MLflow tracking server with the drivers the official image lacks:
+# psycopg2 (Postgres backend store) and google-cloud-storage (GCS artifacts).
+# Keep the version in step with the training client (uv.lock).
+FROM python:3.11-slim
+
+RUN pip install --no-cache-dir \
+        "mlflow==3.8.0" \
+        "psycopg2-binary>=2.9.10,<3" \
+        "google-cloud-storage>=2.18,<4" \
+    && useradd --create-home --uid 1000 mlflow
+
+USER mlflow
+EXPOSE 5000
+
+# Configured entirely through env vars so local and GKE share one manifest
+CMD ["sh", "-c", "exec mlflow server --host 0.0.0.0 --port 5000 --workers ${MLFLOW_WORKERS:-2} --backend-store-uri \"postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:5432/${DB_NAME}\" --artifacts-destination \"${ARTIFACTS_DESTINATION}\" --serve-artifacts --allowed-hosts \"${MLFLOW_ALLOWED_HOSTS}\""]

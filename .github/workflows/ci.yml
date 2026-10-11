@@ -47,16 +47,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Render kustomize overlays
+      - name: Render kustomize base and prod overlay
         run: |
-          # Prod reads DB credentials from a gitignored file; use the example to render
-          cp k8s/overlays/prod/postgres.secret.env.example k8s/overlays/prod/postgres.secret.env
-          for overlay in staging prod; do
-            echo "::group::$overlay"
-            kubectl kustomize "k8s/overlays/$overlay" > "/tmp/$overlay.yaml"
-            echo "rendered $(grep -c '^kind:' /tmp/$overlay.yaml) resources"
+          for dir in base overlays/prod; do
+            echo "::group::$dir"
+            kubectl kustomize "k8s/$dir" > /tmp/rendered.yaml
+            echo "rendered $(grep -c '^kind:' /tmp/rendered.yaml) resources"
             echo "::endgroup::"
           done
+
+      - name: Prod overlay leaves only deploy-time placeholders
+        run: |
+          # deploy_gke.sh substitutes exactly these; anything else would ship literally
+          kubectl kustomize k8s/overlays/prod | grep -o '\${[A-Z_]*}' | sort -u > /tmp/found
+          printf '%s\n' '${API_IMAGE}' '${MLFLOW_IMAGE}' '${PROJECT_ID}' '${SQL_CONNECTION}' | sort > /tmp/expected
+          diff /tmp/expected /tmp/found
 
   terraform:
     runs-on: ubuntu-latest
@@ -81,6 +86,9 @@ jobs:
 
   docker-build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image: [api, mlflow]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -89,12 +97,12 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       # Build only (no push) so a broken Dockerfile fails here, not during deploy
-      - name: Build API image
+      - name: Build ${{ matrix.image }} image
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./docker/Dockerfile.api
+          file: ./docker/Dockerfile.${{ matrix.image }}
           platforms: linux/amd64
           push: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

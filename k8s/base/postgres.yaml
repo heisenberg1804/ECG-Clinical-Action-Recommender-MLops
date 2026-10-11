@@ -1,44 +1,35 @@
----
+# In-cluster Postgres for local clusters only (prod uses Cloud SQL).
+# Credentials come from the ecg-db Secret, created by scripts/deploy-minikube.sh
+# with a random password, so none are committed.
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: postgres-config
-  namespace: ecg-dev
+  name: postgres-init
 data:
-  POSTGRES_DB: ecg_predictions
-  POSTGRES_USER: ecg_user
-
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: postgres-secret
-  namespace: ecg-dev
-type: Opaque
-stringData:
-  POSTGRES_PASSWORD: "ecg_password_dev"  # Change in production!
-
+  # The API creates its own tables on startup; MLflow just needs a database
+  01-mlflow.sql: |
+    CREATE DATABASE mlflow;
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: postgres-pvc
-  namespace: ecg-dev
+  name: postgres-data
 spec:
-  accessModes:
-    - ReadWriteOnce
+  accessModes: [ReadWriteOnce]
   resources:
     requests:
       storage: 5Gi
-
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: postgres
-  namespace: ecg-dev
+  labels:
+    app: postgres
 spec:
   replicas: 1
+  strategy:
+    type: Recreate  # One writer on a ReadWriteOnce volume
   selector:
     matchLabels:
       app: postgres
@@ -52,36 +43,44 @@ spec:
         image: postgres:15
         ports:
         - containerPort: 5432
-        envFrom:
-        - configMapRef:
-            name: postgres-config
-        - secretRef:
-            name: postgres-secret
+        env:
+        - name: POSTGRES_DB
+          value: ecg_predictions
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef: {name: ecg-db, key: username}
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef: {name: ecg-db, key: password}
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
         volumeMounts:
-        - name: postgres-storage
+        - name: data
           mountPath: /var/lib/postgresql/data
+        - name: init
+          mountPath: /docker-entrypoint-initdb.d
+        readinessProbe:
+          exec:
+            command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\""]
+          periodSeconds: 5
         resources:
-          requests:
-            memory: "256Mi"
-            cpu: "250m"
-          limits:
-            memory: "512Mi"
-            cpu: "500m"
+          requests: {cpu: 250m, memory: 512Mi}
+          limits: {cpu: 250m, memory: 512Mi}
       volumes:
-      - name: postgres-storage
+      - name: data
         persistentVolumeClaim:
-          claimName: postgres-pvc
-
+          claimName: postgres-data
+      - name: init
+        configMap:
+          name: postgres-init
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: postgres
-  namespace: ecg-dev
 spec:
   selector:
     app: postgres
   ports:
   - port: 5432
     targetPort: 5432
-  type: ClusterIP
