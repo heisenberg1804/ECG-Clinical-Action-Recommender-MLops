@@ -1,6 +1,6 @@
 # ECG Clinical Action Recommender
 
-[![CI](https://github.com/heisenberg1804/ECG-Recommender-MLops/actions/workflows/ci.yml/badge.svg)](https://github.com/heisenberg1804/ECG-Recommender-MLops/actions/workflows/ci.yml)
+[![CI](https://github.com/heisenberg1804/ECG-Clinical-Action-Recommender-MLops/actions/workflows/ci.yml/badge.svg)](https://github.com/heisenberg1804/ECG-Clinical-Action-Recommender-MLops/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 An end-to-end MLOps system that classifies 12-lead ECGs into five diagnostic
@@ -120,8 +120,8 @@ flowchart LR
 optionally Docker.
 
 ```bash
-git clone https://github.com/heisenberg1804/ECG-Recommender-MLops.git
-cd ECG-Recommender-MLops
+git clone https://github.com/heisenberg1804/ECG-Clinical-Action-Recommender-MLops.git
+cd ECG-Clinical-Action-Recommender-MLops
 git lfs pull                      # model weights
 uv sync --all-extras
 ```
