@@ -66,9 +66,10 @@ logs/
 gcp-key.json
 *-key.json
 
-# Only models/best_model.pth is baked into the image
+# Only the promoted champion is baked into the image
 models/*
 !models/best_model.pth
+!models/model_meta.json
 
 # Local tooling / artifacts
 airflow/

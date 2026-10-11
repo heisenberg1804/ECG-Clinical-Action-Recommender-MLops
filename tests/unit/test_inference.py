@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from src.ml.explainability.explainer import find_attention_segments
-from src.ml.inference.predictor import ClinicalActionPredictor
+from src.ml.inference.predictor import DEFAULT_THRESHOLD, ClinicalActionPredictor
 
 MODEL_PATH = Path(__file__).parents[2] / "models" / "best_model.pth"
 
@@ -108,3 +108,23 @@ def test_find_attention_segments():
     attention[3000:3100] = 0.6  # 6.00-6.20 s
     segments = find_attention_segments(attention)
     assert [(s["start_s"], s["end_s"]) for s in segments] == [(1.0, 1.5), (6.0, 6.2)]
+
+
+class TestModelMeta:
+    def test_tuned_thresholds_are_used_when_meta_matches(self, predictor):
+        import json
+        meta = json.loads(MODEL_PATH.with_name("model_meta.json").read_text())
+        assert predictor.model_version == meta["model_version"]
+        assert predictor.thresholds == meta["thresholds"]
+
+    def test_mismatched_meta_is_ignored(self, tmp_path):
+        import json
+        import shutil
+
+        shutil.copy(MODEL_PATH, tmp_path / "best_model.pth")
+        (tmp_path / "model_meta.json").write_text(json.dumps({
+            "model_version": "resnet18-000000000000",
+            "thresholds": dict.fromkeys(["NORM", "MI", "STTC", "CD", "HYP"], 0.99),
+        }))
+        p = ClinicalActionPredictor(model_path=tmp_path / "best_model.pth", device="cpu")
+        assert set(p.thresholds.values()) == {DEFAULT_THRESHOLD}
