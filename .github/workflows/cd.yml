@@ -21,7 +21,10 @@ env:
 
 jobs:
   build-and-deploy:
+    # DEPLOY_ENABLED is a repository variable (Settings -> Secrets and variables ->
+    # Actions -> Variables). Keep it unset while the GCP infra is torn down.
     if: >-
+      vars.DEPLOY_ENABLED == 'true' &&
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
