@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow
+spec:
+  template:
+    spec:
+      initContainers:
+      - name: cloud-sql-proxy
+        image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.25.4
+        restartPolicy: Always
+        args: ["--structured-logs", "--port=5432", "${SQL_CONNECTION}"]
+        securityContext:
+          runAsNonRoot: true
+        resources:
+          requests: {cpu: 100m, memory: 128Mi}
+          limits: {cpu: 100m, memory: 128Mi}
+      containers:
+      - name: mlflow
+        image: ${MLFLOW_IMAGE}
+        imagePullPolicy: Always
+        env:
+        - name: DB_HOST
+          value: "127.0.0.1"
+        - name: ARTIFACTS_DESTINATION
+          value: gs://${PROJECT_ID}-mlflow/artifacts
+        volumeMounts:
+        - mountPath: /mlflow/artifacts
+          $patch: delete
+      volumes:
+      - name: artifacts
+        $patch: delete

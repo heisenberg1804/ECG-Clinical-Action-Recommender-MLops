@@ -29,7 +29,7 @@ mlflow:  ## MLflow UI on :5001
 	uv run mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5001
 
 # ---------------- Cloud (see infra/README.md) ----------------
-.PHONY: foundation demo-up demo-down inventory
+.PHONY: foundation demo-up deploy demo-down inventory
 foundation:  ## Apply the long-lived stack (budget kill switch, buckets, registry, WIF)
 	$(TF)/foundation init -input=false
 	$(TF)/foundation apply
@@ -38,7 +38,11 @@ demo-up:  ## Create the billable platform (GKE Autopilot + Cloud SQL)
 	$(TF)/platform init -input=false
 	$(TF)/platform apply
 
-demo-down:  ## Destroy the billable platform, then verify nothing is left
+deploy:  ## Deploy :latest images to GKE from this machine (CD does this on merge)
+	scripts/deploy_gke.sh $(PROJECT)
+
+demo-down:  ## Delete the app (releases its load balancer), destroy the platform, verify
+	-kubectl delete namespace ecg-prod --wait --timeout=5m
 	$(TF)/platform destroy
 	$(MAKE) inventory
 
