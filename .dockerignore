@@ -58,3 +58,22 @@ docs/
 # Logs
 *.log
 logs/
+
+# Secrets: never send to the build context
+.env
+.env.*
+*.env
+gcp-key.json
+*-key.json
+
+# Only models/best_model.pth is baked into the image
+models/*
+!models/best_model.pth
+
+# Local tooling / artifacts
+airflow/
+reports/
+scripts/
+docker/
+.dvc/
+.ruff_cache/

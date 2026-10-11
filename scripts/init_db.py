@@ -4,7 +4,9 @@ import asyncio
 
 import asyncpg
 
-DATABASE_URL = "postgresql://ecg_user:ecg_password_dev@localhost:5432/ecg_predictions"
+from src.db import postgres_dsn
+
+DATABASE_URL = postgres_dsn()
 
 CREATE_TABLES = """
 CREATE TABLE IF NOT EXISTS predictions (

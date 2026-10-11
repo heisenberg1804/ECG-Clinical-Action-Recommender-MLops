@@ -6,6 +6,7 @@ Purpose: Detect input/output drift and alert via Email if detected.
 """
 
 import asyncio
+import os
 import sys
 from datetime import datetime, timedelta
 
@@ -18,13 +19,17 @@ from airflow import DAG
 sys.path.insert(0, "/opt/airflow")
 
 # Ensure this module exists in your src folder, or the DAG will fail to import
+from src.db import postgres_dsn
 from src.monitoring.drift_detector import check_drift_and_alert
+
+# Comma-separated list, set in docker/.env.airflow
+ALERT_RECIPIENTS = [e for e in os.getenv("ALERT_EMAIL_TO", "").split(",") if e]
 
 
 def run_drift_detection(**context):
     """Run drift detection and return results."""
-    # Database connection string (matches your docker-compose service names)
-    db_url = "postgresql://ecg_user:ecg_password_dev@host.docker.internal:5432/ecg_predictions"
+    # Credentials come from the ECG_POSTGRES_* env vars set in docker-compose.airflow.yml
+    db_url = postgres_dsn(prefix="ECG_POSTGRES_")
 
     # Run async drift detection
     summary = asyncio.run(check_drift_and_alert(db_url, threshold=0.1))
@@ -51,7 +56,7 @@ def log_drift_metrics(**context):
 
 def check_if_alert_needed(**context):
     """
-    ShortCircuitOperator function. 
+    ShortCircuitOperator function.
     Returns True to proceed (send email), False to skip downstream tasks.
     """
     summary = context["ti"].xcom_pull(task_ids='detect_drift', key="drift_summary")
@@ -70,6 +75,8 @@ def check_if_alert_needed(**context):
 def format_drift_email(**context):
     """Format email body for drift alert."""
     summary = context['ti'].xcom_pull(task_ids='detect_drift', key='drift_summary')
+    input_detected = summary['input_drift'].get('drift_detected', False)
+    prediction_detected = summary['prediction_drift'].get('drift_detected', False)
 
     html = f"""
     <html>
@@ -77,7 +84,10 @@ def format_drift_email(**context):
         <style>
             body {{ font-family: Arial, sans-serif; }}
             .alert {{ color: #d32f2f; font-weight: bold; }}
-            .metric {{ background-color: #f5f5f5; padding: 10px; margin-bottom: 10px; border-radius: 5px; }}
+            .metric {{
+                background-color: #f5f5f5; padding: 10px;
+                margin-bottom: 10px; border-radius: 5px;
+            }}
         </style>
     </head>
     <body>
@@ -86,13 +96,13 @@ def format_drift_email(**context):
 
         <div class="metric">
             <h3>Input Drift:</h3>
-            <p>Detected: <span class="alert">{summary['input_drift'].get('drift_detected', False)}</span></p>
+            <p>Detected: <span class="alert">{input_detected}</span></p>
             <p>Drift Share: <strong>{summary['input_drift'].get('drift_share', 0):.2%}</strong></p>
         </div>
 
         <div class="metric">
             <h3>Prediction Drift:</h3>
-            <p>Detected: <span class="alert">{summary['prediction_drift'].get('drift_detected', False)}</span></p>
+            <p>Detected: <span class="alert">{prediction_detected}</span></p>
         </div>
 
         <h3>Action Required:</h3>
@@ -157,7 +167,7 @@ with DAG(
     # Uses the Global SMTP config from docker-compose
     send_email_alert = EmailOperator(
         task_id='send_email_alert',
-        to=['sahil.s.mohanty@gmail.com'],  # <--- UPDATE THIS EMAIL
+        to=ALERT_RECIPIENTS,
         subject='🚨 Drift Detected - ECG Clinical Recommender',
         # Pulls return value from format_email task
         html_content="{{ ti.xcom_pull(task_ids='format_email') }}",

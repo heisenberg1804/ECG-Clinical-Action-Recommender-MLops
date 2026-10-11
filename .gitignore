@@ -77,6 +77,16 @@ docker/docker-compose.airflow.override.yml
 google-cloud-sdk/
 *.tar.gz
 
-#k8s kustomization
-k8s/overlays/*/kustomization.yaml
+# k8s: real overlay kustomizations and secret env files stay local
+k8s/overlays/*/*.secret.env
+
+# Cloud credentials
 gcp-key.json
+*-key.json
+
+# Docker secrets
+docker/.env.airflow
+
+# Local LLM weights (multi-GB)
+*.gguf
+models/llm/
