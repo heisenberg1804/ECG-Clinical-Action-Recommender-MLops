@@ -1,15 +1,26 @@
 # MLflow tracking server with the drivers the official image lacks:
 # psycopg2 (Postgres backend store) and google-cloud-storage (GCS artifacts).
-# Keep the version in step with the training client (uv.lock).
+#
+# Every package that's also in uv.lock is installed at its locked version, so the
+# server runs exactly the MLflow/SQLAlchemy/Alembic the training client uses.
+# (An unconstrained install pulled SQLAlchemy 2.1, which MLflow 3.8 can't import.)
 FROM python:3.11-slim
 
-RUN pip install --no-cache-dir \
-        "mlflow==3.8.0" \
-        "psycopg2-binary>=2.9.10,<3" \
-        "google-cloud-storage>=2.18,<4" \
+COPY --from=ghcr.io/astral-sh/uv:0.9.18 /uv /bin/uv
+COPY pyproject.toml uv.lock /tmp/lock/
+
+RUN uv export --project /tmp/lock --frozen --no-hashes --no-emit-project --all-extras \
+        --format requirements-txt -o /tmp/constraints.txt \
+    && uv pip install --system --no-cache -c /tmp/constraints.txt \
+        mlflow \
+        "psycopg2-binary==2.9.13" \
+        "google-cloud-storage==3.17.0" \
+    && rm -rf /tmp/lock /tmp/constraints.txt /bin/uv \
     && useradd --create-home --uid 1000 mlflow
 
 USER mlflow
+# Writable working dir: nothing should ever fall back to writing into /
+WORKDIR /home/mlflow
 EXPOSE 5000
 
 # Configured entirely through env vars so local and GKE share one manifest

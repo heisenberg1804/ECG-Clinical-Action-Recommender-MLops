@@ -53,19 +53,37 @@ spec:
             secretKeyRef: {name: mlflow-db, key: password}
         - name: ARTIFACTS_DESTINATION
           value: /mlflow/artifacts
-        - name: MLFLOW_ALLOWED_HOSTS  # MLflow 3 rejects unknown Host headers
-          value: "mlflow,mlflow:5000,localhost,localhost:5000,127.0.0.1,127.0.0.1:5000"
+        # MLflow 3 rejects unknown Host headers (fnmatch patterns; the port is
+        # part of the match, so allow any port for port-forwards)
+        - name: MLFLOW_ALLOWED_HOSTS
+          value: "mlflow,mlflow:*,mlflow.*,localhost,localhost:*,127.0.0.1,127.0.0.1:*"
+        # The server resolves models:/m-... URIs (model registration in MLflow 3)
+        # with an internal client; without this it falls back to a local ./mlruns
+        - name: MLFLOW_TRACKING_URI
+          value: http://localhost:5000
+        - name: MLFLOW_WORKERS  # One worker is ample for a team tracking server
+          value: "1"
         volumeMounts:
         - name: artifacts
           mountPath: /mlflow/artifacts
+        startupProbe:  # Imports + DB migrations; allow up to 5 min
+          httpGet:
+            path: /health
+            port: http
+          periodSeconds: 5
+          failureThreshold: 60
         readinessProbe:
           httpGet:
             path: /health
             port: http
           periodSeconds: 10
+          timeoutSeconds: 5
+        # Measured on minikube: ~460 MiB idle with 2 workers and OOM-killed at
+        # 512 MiB while registering a model; at 250m CPU, half of startup was
+        # throttled and readiness flapped for minutes. Idle CPU is ~6m.
         resources:
-          requests: {cpu: 250m, memory: 512Mi}
-          limits: {cpu: 250m, memory: 512Mi}
+          requests: {cpu: 500m, memory: 1Gi}
+          limits: {cpu: 500m, memory: 1Gi}
       volumes:
       - name: artifacts
         persistentVolumeClaim:
