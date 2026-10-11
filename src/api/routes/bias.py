@@ -42,7 +42,7 @@ async def get_bias_status():
         return BiasStatus(
             timestamp=report['timestamp'],
             bias_detected=report['bias_detected'],
-            sample_size=report.get('sample_size', 0),
+            sample_size=report['demographic_parity'].get('sample_size', 0),
             sex_parity_passes=sex_passes,
             age_parity_passes=age_passes,
             warnings=report['warnings'],

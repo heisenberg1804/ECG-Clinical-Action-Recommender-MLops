@@ -10,6 +10,7 @@ Handles:
 - Inference
 - Action mapping
 """
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -20,6 +21,11 @@ import torch
 import torch.nn as nn
 
 from src.ml.models.resnet1d import resnet18_1d
+
+TARGET_FS = 500  # Hz the model was trained on
+TARGET_SAMPLES = 5000  # 10 s at 500 Hz
+DEFAULT_THRESHOLD = float(os.getenv("PREDICTION_THRESHOLD", "0.3"))
+DEFAULT_TOP_K = int(os.getenv("MAX_RECOMMENDATIONS", "5"))
 
 
 class ClinicalActionPredictor:
@@ -67,6 +73,7 @@ class ClinicalActionPredictor:
 
         # Load model
         self.superclasses = ['NORM', 'MI', 'STTC', 'CD', 'HYP']
+        self.model_version = os.getenv("MODEL_VERSION", "")
         self.model = self._load_model()
 
         # Load action mapping
@@ -94,6 +101,7 @@ class ClinicalActionPredictor:
                 loaded_model.eval()
 
                 print("✅ Model loaded from MLflow Registry")
+                self.model_version = self.model_version or f"{self.model_name}/{self.model_stage}"
                 return loaded_model
 
             except Exception as e:
@@ -104,11 +112,15 @@ class ClinicalActionPredictor:
         # Load from file path
         if self.model_path and self.model_path.exists():
             print(f"📦 Loading model from file: {self.model_path}")
-            state_dict = torch.load(self.model_path, map_location=self.device)
+            state_dict = torch.load(self.model_path, map_location=self.device, weights_only=True)
             model.load_state_dict(state_dict)
             model = model.to(self.device)
             model.eval()
-            print("✅ Model loaded from file")
+            if not self.model_version or self.model_version == "latest":
+                # Tie every logged prediction to the exact weights that produced it
+                digest = hashlib.sha256(self.model_path.read_bytes()).hexdigest()[:12]
+                self.model_version = f"resnet18-{digest}"
+            print(f"✅ Model loaded from file ({self.model_version})")
             return model
 
         raise FileNotFoundError(
@@ -125,24 +137,46 @@ class ClinicalActionPredictor:
         with open(self.action_mapping_path) as f:
             return json.load(f)
 
-    def preprocess_signal(self, signal: np.ndarray) -> torch.Tensor:
+    def preprocess_signal(
+        self, signal: np.ndarray, sampling_rate: int = TARGET_FS
+    ) -> torch.Tensor:
         """
-        Preprocess ECG signal.
+        Preprocess ECG signal to match training: 500 Hz, 10 s, per-lead z-score.
 
         Args:
             signal: ECG signal, shape (12, num_samples) or (num_samples, 12)
+            sampling_rate: Sampling rate of `signal` in Hz
 
         Returns:
             Preprocessed tensor, shape (1, 12, 5000)
+
+        Raises:
+            ValueError: If the signal is malformed or shorter than 10 seconds
         """
+        signal = np.asarray(signal, dtype=np.float32)
+        if signal.ndim != 2 or 12 not in signal.shape:
+            raise ValueError(f"Expected a 12-lead signal, got shape {signal.shape}")
+        if not np.isfinite(signal).all():
+            raise ValueError("ECG signal contains NaN or infinite values")
+
         # Ensure correct shape (12, num_samples)
         if signal.shape[0] != 12:
             signal = signal.T
 
-        # Resample to 5000 samples if needed
-        if signal.shape[1] != 5000:
+        # Resample by duration so time scale matches training (500 Hz)
+        if sampling_rate != TARGET_FS:
             from scipy.signal import resample
-            signal = resample(signal, 5000, axis=1)
+            n_out = round(signal.shape[1] * TARGET_FS / sampling_rate)
+            signal = resample(signal, n_out, axis=1)
+
+        duration_s = signal.shape[1] / TARGET_FS
+        if signal.shape[1] < TARGET_SAMPLES:
+            raise ValueError(
+                f"ECG must be at least 10 s long; got {duration_s:.2f} s "
+                f"({signal.shape[1]} samples at {TARGET_FS} Hz after resampling)"
+            )
+        # The model was trained on 10 s strips; use the first 10 s
+        signal = signal[:, :TARGET_SAMPLES]
 
         # Normalize per lead (z-score)
         signal = (signal - signal.mean(axis=1, keepdims=True)) / (
@@ -157,11 +191,12 @@ class ClinicalActionPredictor:
     def predict(
         self,
         signal: np.ndarray,
-        threshold: float = 0.5,
-        top_k: int = 5,
+        sampling_rate: int = TARGET_FS,
+        threshold: float = DEFAULT_THRESHOLD,
+        top_k: int = DEFAULT_TOP_K,
         explain: bool = False,
-        use_llm: bool = False,  # Add LLM flag
-        patient_age: int | None = None,  # Add patient context
+        use_llm: bool = False,
+        patient_age: int | None = None,
         patient_sex: str | None = None,
     ) -> dict[str, Any]:
         """
@@ -169,18 +204,23 @@ class ClinicalActionPredictor:
 
         Args:
             signal: ECG signal, shape (12, num_samples) or (num_samples, 12)
+            sampling_rate: Sampling rate of `signal` in Hz
             threshold: Probability threshold for diagnosis prediction
             top_k: Return top K recommendations
             explain: If True, generate explanation for top prediction
+            use_llm: If True, ask the local LLM to phrase the explanation
+            patient_age: Patient age (LLM context only)
+            patient_sex: Patient sex (LLM context only)
 
         Returns:
             Dictionary with:
-                - diagnoses: List of predicted diagnoses with probabilities
+                - probabilities: Sigmoid output for every class
+                - diagnoses: Classes above threshold, sorted by confidence
                 - recommendations: List of recommended clinical actions
                 - explanation: (optional) Explanation for top diagnosis
         """
         # Preprocess
-        signal_tensor = self.preprocess_signal(signal).to(self.device)
+        signal_tensor = self.preprocess_signal(signal, sampling_rate).to(self.device)
 
         # Inference
         with torch.no_grad():
@@ -217,16 +257,17 @@ class ClinicalActionPredictor:
                         })
                         seen_actions.add(action_text)
 
-        # If no diagnoses above threshold, return normal
+        # Nothing above threshold: the model is not confident in any class,
+        # including NORM, so defer to a human rather than implying "normal"
         if not recommendations:
-            recommendations = self.action_mapping.get('NORM', [
-                {
-                    'action': 'Normal ECG - discharge with instructions',
-                    'confidence': 1.0 - probs.max(),
-                    'urgency': 'routine',
-                    'reasoning': 'No significant abnormalities detected',
-                }
-            ])
+            recommendations = [{
+                'action': 'Manual ECG review recommended',
+                'confidence': float(1.0 - probs.max()),
+                'urgency': 'routine',
+                'reasoning': (
+                    f'No diagnostic class exceeded the {threshold:.2f} confidence threshold'
+                ),
+            }]
 
         # Sort by urgency (immediate > urgent > routine), then by confidence
         urgency_order = {'immediate': 0, 'urgent': 1, 'routine': 2}
@@ -239,6 +280,7 @@ class ClinicalActionPredictor:
         recommendations = recommendations[:top_k]
 
         result = {
+            'probabilities': {sc: float(p) for sc, p in zip(self.superclasses, probs)},
             'diagnoses': diagnoses,
             'recommendations': recommendations,
         }
@@ -249,9 +291,8 @@ class ClinicalActionPredictor:
 
             explanation = explain_top_prediction(
                 model=self.model,
-                signal=signal,
+                signal_tensor=signal_tensor,
                 diagnoses=diagnoses,
-                device=self.device,
                 superclasses=self.superclasses,
                 patient_age=patient_age,
                 patient_sex=patient_sex,

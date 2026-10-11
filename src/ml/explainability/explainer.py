@@ -4,11 +4,15 @@
 """
 Explainability module for ECG predictions.
 
-Implements:
-- Grad-CAM for 1D signals (shows which ECG segments matter)
-- Lead importance scores (which leads drove the decision)
-- Temporal attention (which time points are critical)
+Two complementary attributions are computed from a single backward pass:
+- Grad-CAM on the last residual block -> *when* in the 10 s strip the model looked
+- Gradient x input on the 12-lead input -> *which leads* drove the decision
+
+Both operate on the exact preprocessed tensor the model scored, and use
+torch.autograd.grad rather than module hooks, so explanations are thread-safe
+and leave no state behind on the shared model.
 """
+import os
 from typing import Any
 
 import numpy as np
@@ -16,244 +20,187 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as fn
 
+LEAD_NAMES = ['I', 'II', 'III', 'aVR', 'aVL', 'aVF', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6']
+SAMPLING_RATE = 500  # Hz of the model input
+HEATMAP_RATE = 50  # Hz of the heatmaps returned by the API (keeps payloads small)
+SMOOTHING_SAMPLES = 51  # ~100 ms window for per-lead saliency
+ATTENTION_THRESHOLD = 0.5
+MAX_SEGMENTS = 3
 
-class ECGGradCAM:
-    """Grad-CAM for 1D ECG signals."""
+DIAGNOSIS_NAMES = {
+    'NORM': 'a normal ECG',
+    'MI': 'myocardial infarction',
+    'STTC': 'ST/T changes',
+    'CD': 'a conduction disturbance',
+    'HYP': 'hypertrophy',
+}
 
-    def __init__(self, model: nn.Module, target_layer: nn.Module):
-        """
-        Initialize Grad-CAM explainer.
 
-        Args:
-            model: The trained model
-            target_layer: Layer to extract activations from (usually last conv layer)
-        """
-        self.model = model
-        self.target_layer = target_layer
-        self.gradients = None
-        self.activations = None
+def compute_attributions(
+    model: nn.Module,
+    signal_tensor: torch.Tensor,
+    target_class: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Compute Grad-CAM (temporal) and gradient x input (per-lead) attributions.
 
-        # Register hooks
-        self._register_hooks()
+    Args:
+        model: ResNet1D exposing forward_features / forward_head
+        signal_tensor: Preprocessed model input, shape (1, 12, T)
+        target_class: Index of the class to explain
 
-    def _register_hooks(self):
-        """Register forward and backward hooks."""
-        def forward_hook(module, input, output):
-            self.activations = output.detach()
+    Returns:
+        cam: (T,) temporal importance, normalized to [0, 1]
+        saliency: (12, T) per-lead importance, smoothed, normalized to [0, 1]
+    """
+    model.eval()
+    x = signal_tensor.detach().clone().requires_grad_(True)
 
-        def backward_hook(module, grad_input, grad_output):
-            self.gradients = grad_output[0].detach()
+    with torch.enable_grad():
+        features = model.forward_features(x)  # (1, C, T')
+        logits = model.forward_head(features)
+        grad_features, grad_input = torch.autograd.grad(
+            logits[0, target_class], [features, x]
+        )
 
-        self.target_layer.register_forward_hook(forward_hook)
-        self.target_layer.register_full_backward_hook(backward_hook)
+    # Grad-CAM: channel weights = time-averaged gradients
+    weights = grad_features[0].mean(dim=1, keepdim=True)  # (C, 1)
+    cam = fn.relu((weights * features[0].detach()).sum(dim=0))  # (T',)
+    cam = fn.interpolate(
+        cam[None, None], size=x.shape[-1], mode='linear', align_corners=False
+    )[0, 0]
+    if cam.max() > 0:
+        cam = cam / cam.max()
 
-    def generate_cam(
-        self,
-        input_signal: torch.Tensor,
-        target_class: int
-    ) -> np.ndarray:
-        """
-        Generate Grad-CAM heatmap for target class.
+    # Gradient x input, smoothed so it highlights waveform regions, not single samples
+    saliency = (grad_input[0] * x[0].detach()).abs()  # (12, T)
+    saliency = fn.avg_pool1d(
+        saliency[None], kernel_size=SMOOTHING_SAMPLES, stride=1,
+        padding=SMOOTHING_SAMPLES // 2, count_include_pad=False,
+    )[0]
+    if saliency.max() > 0:
+        saliency = saliency / saliency.max()
 
-        Args:
-            input_signal: Input ECG signal (1, 12, 5000)
-            target_class: Index of diagnosis to explain
+    return cam.cpu().numpy(), saliency.cpu().numpy()
 
-        Returns:
-            CAM heatmap (12, 5000) - normalized 0-1
-        """
-        self.model.eval()
 
-        # Forward pass
-        output = self.model(input_signal)
+def find_attention_segments(
+    attention: np.ndarray,
+    threshold: float = ATTENTION_THRESHOLD,
+    fs: int = SAMPLING_RATE,
+    max_segments: int = MAX_SEGMENTS,
+) -> list[dict[str, float]]:
+    """Return the strongest contiguous regions where attention exceeds threshold."""
+    above = np.concatenate([[False], attention > threshold, [False]])
+    edges = np.flatnonzero(np.diff(above.astype(int)))
+    segments = [
+        {
+            'start_s': round(start / fs, 2),
+            'end_s': round(end / fs, 2),
+            'peak': float(attention[start:end].max()),
+        }
+        for start, end in zip(edges[::2], edges[1::2])
+    ]
+    segments.sort(key=lambda s: s['peak'], reverse=True)
+    return sorted(segments[:max_segments], key=lambda s: s['start_s'])
 
-        # Zero gradients
-        self.model.zero_grad()
 
-        # Backward pass for target class
-        target_score = output[0, target_class]
-        target_score.backward()
-
-        # Get gradients and activations
-        gradients = self.gradients[0]  # (channels, time)
-        activations = self.activations[0]  # (channels, time)
-
-        # Global average pooling of gradients (channel importance weights)
-        weights = gradients.mean(dim=1, keepdim=True)  # (channels, 1)
-
-        # Weighted combination of activation maps
-        cam = (weights * activations).sum(dim=0)  # (time,)
-
-        # Apply ReLU (only positive contributions)
-        cam = fn.relu(cam)
-
-        # Normalize to 0-1
-        if cam.max() > 0:
-            cam = cam / cam.max()
-
-        # Upsample to original signal length
-        cam = fn.interpolate(
-            cam.unsqueeze(0).unsqueeze(0),
-            size=input_signal.shape[-1],
-            mode='linear',
-            align_corners=False
-        ).squeeze()
-
-        cam_np = cam.cpu().numpy()
-
-        # Broadcast to all 12 leads (for simplicity)
-        # In practice, could compute per-lead importance separately
-        cam_2d = np.tile(cam_np, (12, 1))
-
-        return cam_2d
+def _downsample(arr: np.ndarray, factor: int) -> np.ndarray:
+    """Average-pool the last axis by an integer factor."""
+    usable = arr.shape[-1] - arr.shape[-1] % factor
+    return arr[..., :usable].reshape(*arr.shape[:-1], -1, factor).mean(axis=-1)
 
 
 class ECGExplainer:
     """High-level explainer for ECG predictions."""
 
-    def __init__(self, model: nn.Module, device: torch.device):
-        """
-        Initialize explainer.
-
-        Args:
-            model: Trained ECG model
-            device: Device for computation
-        """
+    def __init__(self, model: nn.Module):
         self.model = model
-        self.device = device
-
-        # Get the last convolutional layer for Grad-CAM
-        # For ResNet: layer4[-1]
-        self.target_layer = model.layer4[-1].conv2
-
-        self.grad_cam = ECGGradCAM(model, self.target_layer)
 
     def explain_prediction(
         self,
-        signal: np.ndarray,
+        signal_tensor: torch.Tensor,
         diagnosis_idx: int,
         diagnosis_name: str,
-        lead_names: list[str] = None,
+        lead_names: list[str] | None = None,
     ) -> dict[str, Any]:
         """
-        Generate comprehensive explanation for a prediction.
+        Generate an explanation for one predicted class.
 
         Args:
-            signal: ECG signal (12, 5000)
+            signal_tensor: Preprocessed model input (1, 12, 5000), on the model's device
             diagnosis_idx: Index of diagnosis to explain
             diagnosis_name: Name of diagnosis (e.g., "MI")
             lead_names: Names of ECG leads
 
         Returns:
-            Explanation dictionary with importance scores and descriptions
+            Explanation dictionary with importance scores, heatmaps and a description
         """
-        if lead_names is None:
-            lead_names = ['I', 'II', 'III', 'aVR', 'aVL', 'aVF', 'V1', 'V2', 'V3', 'V4', 'V5', 'V6']
+        lead_names = lead_names or LEAD_NAMES
 
-        # Convert to tensor
-        signal_tensor = torch.from_numpy(signal.astype(np.float32)).unsqueeze(0).to(self.device)
+        cam, saliency = compute_attributions(self.model, signal_tensor, diagnosis_idx)
 
-        # Generate Grad-CAM
-        cam = self.grad_cam.generate_cam(signal_tensor, diagnosis_idx)
-
-        # Compute lead importance (average CAM per lead)
-        lead_importance = cam.mean(axis=1)  # (12,)
-
-        # Normalize lead importance to 0-1
+        lead_importance = saliency.mean(axis=1)
         if lead_importance.max() > 0:
             lead_importance = lead_importance / lead_importance.max()
+        ranked = np.argsort(lead_importance)[::-1]
+        important_leads = [lead_names[i] for i in ranked[:4]]
 
-        # Get top leads
-        top_lead_indices = np.argsort(lead_importance)[::-1][:4]
-        important_leads = [lead_names[i] for i in top_lead_indices]
-
-        # Compute temporal importance (average CAM across leads)
-        temporal_importance = cam.mean(axis=0)  # (5000,)
-
-        # Find important time segments (where CAM > 0.5)
-        important_times = np.where(temporal_importance > 0.5)[0]
-
-        if len(important_times) > 0:
-            # Convert sample indices to time (assuming 500 Hz)
-            time_start_sec = important_times[0] / 500.0
-            time_end_sec = important_times[-1] / 500.0
-            time_range = f"{time_start_sec:.2f}s - {time_end_sec:.2f}s"
-        else:
-            time_range = "N/A"
-
-        # Generate clinical description
-        description = self._generate_clinical_description(
-            diagnosis_name,
-            important_leads,
-            time_range
+        segments = find_attention_segments(cam)
+        time_range = (
+            ", ".join(f"{s['start_s']:.2f}s-{s['end_s']:.2f}s" for s in segments)
+            if segments else "N/A"
         )
 
-        explanation = {
+        factor = SAMPLING_RATE // HEATMAP_RATE
+        return {
             'diagnosis': diagnosis_name,
             'important_leads': important_leads,
             'lead_importance_scores': {
-                lead_names[i]: float(lead_importance[i])
-                for i in top_lead_indices
+                lead_names[i]: round(float(lead_importance[i]), 4) for i in ranked
             },
+            'important_segments': segments,
             'important_time_range': time_range,
-            'temporal_attention': temporal_importance.tolist(),  # Full array for visualization
-            'heatmap': cam.tolist(),  # (12, 5000) for visualization
-            'description': description,
+            'heatmap_sampling_rate': HEATMAP_RATE,
+            'temporal_attention': np.round(_downsample(cam, factor), 4).tolist(),
+            'heatmap': np.round(_downsample(saliency, factor), 4).tolist(),
+            'description': self._describe(diagnosis_name, important_leads, time_range),
         }
 
-        return explanation
+    @staticmethod
+    def _describe(diagnosis: str, leads: list[str], time_range: str) -> str:
+        """
+        Plain-language summary of where the model looked.
 
-    def _generate_clinical_description(
-        self,
-        diagnosis: str,
-        leads: list[str],
-        time_range: str
-    ) -> str:
-        """Generate human-readable clinical description."""
-        lead_str = ", ".join(leads)
-
-        descriptions = {
-            'MI': f"ST segment changes detected in leads {lead_str} during interval {time_range}. "
-                  f"This pattern is characteristic of myocardial infarction.",
-
-            'STTC': f"ST/T wave abnormalities identified in leads {lead_str}. "
-                    f"Model focused on the interval {time_range} for this classification.",
-
-            'CD': f"Conduction abnormalities detected, particularly in leads {lead_str}. "
-                  f"The model identified irregular patterns during {time_range}.",
-
-            'HYP': f"Voltage criteria and morphology changes in leads {lead_str} "
-                   f"suggest ventricular hypertrophy. Key interval: {time_range}.",
-
-            'NORM': f"No significant abnormalities detected. The model examined all leads "
-                    f"with particular attention to {lead_str}.",
-        }
-
-        return descriptions.get(
-            diagnosis,
-            f"Key features identified in leads {lead_str} during interval {time_range}."
+        Deliberately describes model attention, not ECG findings: the attribution
+        tells us which regions influenced the score, not what morphology is there.
+        """
+        name = DIAGNOSIS_NAMES.get(diagnosis, diagnosis)
+        text = (
+            f"The prediction of {name} was driven mostly by leads {', '.join(leads)}."
         )
+        if time_range != "N/A":
+            text += f" Model attention peaked at {time_range}."
+        return text + " Review these regions on the tracing to confirm."
 
 
 def explain_top_prediction(
     model: nn.Module,
-    signal: np.ndarray,
+    signal_tensor: torch.Tensor,
     diagnoses: list[dict[str, Any]],
-    device: torch.device,
     superclasses: list[str],
     patient_age: int | None = None,
     patient_sex: str | None = None,
-    recommendations: list[dict[str, Any]] = None,
-    use_llm: bool = False,  # Default to False for speed
+    recommendations: list[dict[str, Any]] | None = None,
+    use_llm: bool = False,
 ) -> dict[str, Any]:
     """
     Explain the top prediction.
 
     Args:
         model: Trained model
-        signal: ECG signal (12, 5000)
-        diagnoses: List of diagnoses with confidence scores
-        device: Computation device
+        signal_tensor: Preprocessed model input (1, 12, 5000), on the model's device
+        diagnoses: List of diagnoses with confidence scores, sorted descending
         superclasses: List of class names
         patient_age: Patient age (for LLM context)
         patient_sex: Patient sex (for LLM context)
@@ -266,54 +213,33 @@ def explain_top_prediction(
     if not diagnoses:
         return {'explanation': 'No diagnosis to explain'}
 
-    # Get primary diagnosis
     primary_dx = diagnoses[0]
     dx_name = primary_dx['diagnosis']
-    dx_idx = superclasses.index(dx_name)
 
-    # Create explainer
-    explainer = ECGExplainer(model, device)
-
-    # Generate Grad-CAM explanation
-    explanation = explainer.explain_prediction(
-        signal=signal,
-        diagnosis_idx=dx_idx,
+    explanation = ECGExplainer(model).explain_prediction(
+        signal_tensor=signal_tensor,
+        diagnosis_idx=superclasses.index(dx_name),
         diagnosis_name=dx_name,
     )
-
-    # Add confidence from prediction
     explanation['confidence'] = primary_dx['confidence']
 
-    # Try LLM explanation if requested
-    if use_llm:
+    if use_llm and os.getenv("DISABLE_LLM_EXPLANATIONS", "false").lower() != "true":
         try:
-            import os
-            # Only load LLM if not explicitly disabled
-            if os.getenv("DISABLE_LLM_EXPLANATIONS", "false").lower() != "true":
-                # from src.ml.explainability.gguf_explainer import get_gguf_explainer
-                from src.ml.explainability.ollama_explainer import get_ollama_explainer
+            from src.ml.explainability.ollama_explainer import get_ollama_explainer
 
-
-                llm_explainer = get_ollama_explainer()
-                llm_description = llm_explainer.generate_explanation(
-                    diagnosis=dx_name,
-                    confidence=primary_dx['confidence'],
-                    important_leads=explanation['important_leads'],
-                    time_range=explanation['important_time_range'],
-                    patient_age=patient_age,
-                    patient_sex=patient_sex,
-                    recommendations=recommendations or [],
-                )
-
-                # Keep both descriptions for comparison
-                explanation['rule_based_description'] = explanation['description']
-                explanation['llm_description'] = llm_description
-                # Use LLM as primary
-                explanation['description'] = llm_description
-                print("✅ LLM explanation generated via GGUF")
-
+            llm_description = get_ollama_explainer().generate_explanation(
+                diagnosis=dx_name,
+                confidence=primary_dx['confidence'],
+                important_leads=explanation['important_leads'],
+                time_range=explanation['important_time_range'],
+                patient_age=patient_age,
+                patient_sex=patient_sex,
+                recommendations=recommendations or [],
+            )
+            explanation['rule_based_description'] = explanation['description']
+            explanation['llm_description'] = llm_description
+            explanation['description'] = llm_description
         except Exception as e:
             print(f"⚠️ LLM explanation failed, using rule-based: {e}")
-            # Keep the static description from explainer.explain_prediction
 
     return explanation
