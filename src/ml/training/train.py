@@ -192,7 +192,9 @@ def train(cfg: TrainConfig) -> dict:
     mlflow.set_experiment(cfg.experiment)
 
     with mlflow.start_run(run_name=cfg.run_name) as run:
-        mlflow.set_tags(lineage_tags())
+        # Captured once, at start: commits made mid-run must not change the recorded lineage
+        lineage = lineage_tags()
+        mlflow.set_tags(lineage)
         mlflow.log_params({k: str(v) for k, v in asdict(cfg).items()})
         mlflow.log_params({f"n_{k}": len(v) for k, v in splits.items()})
 
@@ -262,7 +264,7 @@ def train(cfg: TrainConfig) -> dict:
             "test_at_threshold": at_threshold,
             "test_ece": ece,
             "test_subgroup_auc": subgroups,
-            **lineage_tags(),
+            **lineage,
         }
         (out_dir / "model_meta.json").write_text(json.dumps(meta, indent=2))
         reliability_plot(test_true, test_prob, out_dir / "reliability.png")
