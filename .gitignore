@@ -93,3 +93,12 @@ models/llm/
 
 # Training outputs (tracked in MLflow; promoted weights go to models/best_model.pth)
 models/runs/
+
+# Terraform: state holds generated DB passwords; never commit it
+infra/terraform/**/.terraform/
+infra/terraform/**/.build/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log

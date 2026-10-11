@@ -1,0 +1,2 @@
+# Copy to terraform.tfvars (gitignored).
+project_id = "ecg-mlops-xxxx"

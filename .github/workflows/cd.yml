@@ -12,17 +12,19 @@ concurrency:
   group: deploy-prod
   cancel-in-progress: false  # Never interrupt a rollout halfway
 
+# Project-specific values come from repository variables, set from the
+# foundation stack's outputs (see infra/README.md)
 env:
-  IMAGE: us-central1-docker.pkg.dev/ecg-mlops-project/ecg-repo/ecg-api
-  CLUSTER: ecg-cluster
+  PROJECT: ${{ vars.GCP_PROJECT_ID }}
   REGION: us-central1
-  PROJECT: ecg-mlops-project
+  IMAGE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/ecg-repo/ecg-api
+  CLUSTER: ecg-cluster
   NAMESPACE: ecg-prod
 
 jobs:
   build-and-deploy:
     # DEPLOY_ENABLED is a repository variable (Settings -> Secrets and variables ->
-    # Actions -> Variables). Keep it unset while the GCP infra is torn down.
+    # Actions -> Variables). Set it to true only while the platform stack is up.
     if: >-
       vars.DEPLOY_ENABLED == 'true' &&
       github.event.workflow_run.conclusion == 'success' &&
@@ -40,11 +42,12 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
           lfs: true
 
-      # --- Google Cloud Authentication ---
+      # --- Keyless auth: GitHub OIDC token -> Workload Identity Federation ---
       - name: 'Authenticate to Google Cloud'
         uses: 'google-github-actions/auth@v2'
         with:
-          credentials_json: '${{ secrets.GCP_SA_KEY }}'
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
 
       - name: 'Set up Cloud SDK'
         uses: 'google-github-actions/setup-gcloud@v2'
