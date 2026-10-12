@@ -1,0 +1,527 @@
+# Architecture & Decision Record
+
+This document records the significant decisions in this project, in every
+layer, together with the reasoning, the trade-offs, and the alternatives that
+were rejected. It is versioned with the code and updated whenever a decision
+is made or changed.
+
+**How to read an entry**
+
+- **Status**: `Accepted`, `Superseded by D-xx`, `Proposed`, or `Deprecated`.
+  Decisions are superseded, never deleted, so the history stays visible.
+- **Context**: the problem or constraint that forced a choice.
+- **Decision**: what was chosen.
+- **Why**: the reasoning.
+- **Trade-offs**: what this costs or makes harder.
+- **Alternatives**: options considered and why they lost.
+- **Where**: the files that implement it.
+
+**How to add one**: append it under its layer with the next free ID, add a row
+to the index, and add a line to the [changelog](#changelog). If it replaces an
+earlier decision, set the old one's status to `Superseded by D-xx`.
+
+---
+
+## Index
+
+| ID | Decision | Layer | Status |
+|---|---|---|---|
+| [D-01](#d-01-portfolio-first-scope-keep-the-full-mlops-stack) | Portfolio-first scope; keep the full MLOps stack | Scope | Accepted |
+| [D-02](#d-02-research-tool-not-a-medical-device) | Research tool, not a medical device | Scope | Accepted |
+| [D-03](#d-03-ptb-xl-103-versioned-with-dvc-on-gcs) | PTB-XL 1.0.3, versioned with DVC on GCS | Data | Accepted |
+| [D-04](#d-04-official-superclass-label-aggregation) | Official superclass label aggregation | Data | Accepted |
+| [D-05](#d-05-patient-wise-strat_fold-split) | Patient-wise `strat_fold` split | Data | Accepted |
+| [D-06](#d-06-decode-signals-once-into-a-float16-memmap-cache) | Decode signals once into a float16 memmap cache | Data | Accepted |
+| [D-07](#d-07-one-preprocessing-function-shared-by-training-and-serving) | One preprocessing function for training and serving | Preprocessing | Accepted |
+| [D-08](#d-08-1d-resnet-18) | 1D ResNet-18 | Model | Accepted |
+| [D-09](#d-09-training-recipe-and-early-stopping) | Training recipe and early stopping | Training | Accepted |
+| [D-10](#d-10-macro-auc-primary-thresholds-tuned-on-validation-only) | Macro AUC primary; thresholds tuned on validation only | Evaluation | Accepted |
+| [D-11](#d-11-calibration-measured-on-every-run) | Calibration measured on every run | Evaluation | Accepted |
+| [D-12](#d-12-fairness-as-subgroup-performance-against-labels) | Fairness as subgroup performance against labels | Evaluation | Accepted |
+| [D-13](#d-13-report-the-audited-number-0910-not-the-old-9394) | Report the audited number (0.910), not the old 93–94% | Evaluation | Accepted |
+| [D-14](#d-14-mlflow-with-code-and-data-lineage-on-every-run) | MLflow with code and data lineage on every run | Tracking | Accepted |
+| [D-15](#d-15-registry-aliases-challenger--champion) | Registry aliases (`challenger` / `champion`) | Registry | Accepted |
+| [D-16](#d-16-automated-release-gates-for-promotion) | Automated release gates for promotion | Registry | Accepted |
+| [D-17](#d-17-model-identity-is-the-weights-sha256) | Model identity is the weights' sha256 | Registry | Accepted |
+| [D-18](#d-18-bake-the-champion-into-the-image) | Bake the champion into the image | Serving | Accepted |
+| [D-19](#d-19-explanations-grad-cam--gradient--input-no-hooks) | Explanations: Grad-CAM + gradient × input, no hooks | Explainability | Accepted |
+| [D-20](#d-20-api-runtime-behaviour) | API runtime behaviour | Serving | Accepted |
+| [D-21](#d-21-strict-input-contract-and-a-safe-fallback) | Strict input contract and a safe fallback | Serving | Accepted |
+| [D-22](#d-22-public-unauthenticated-api) | Public, unauthenticated API | Serving | Accepted (limitation) |
+| [D-23](#d-23-monitoring-prediction-log--prometheus--airflow-dags) | Monitoring: prediction log + Prometheus + Airflow DAGs | Monitoring | Accepted (rework planned) |
+| [D-24](#d-24-airflow-in-local-docker-compose) | Airflow in local docker-compose | Orchestration | Accepted |
+| [D-25](#d-25-ci-tests-what-would-break-a-deploy) | CI tests what would break a deploy | CI/CD | Accepted |
+| [D-26](#d-26-cd-gated-switchable-smoke-tested-self-rolling-back) | CD: gated, switchable, smoke-tested, self-rolling-back | CI/CD | Accepted |
+| [D-27](#d-27-keyless-github--gcp-auth) | Keyless GitHub → GCP auth | CI/CD | Accepted |
+| [D-28](#d-28-two-terraform-stacks-split-by-lifetime) | Two Terraform stacks split by lifetime | Infrastructure | Accepted |
+| [D-29](#d-29-hard-budget-cap-via-a-kill-switch) | Hard budget cap via a kill switch | Infrastructure | Accepted |
+| [D-30](#d-30-gke-autopilot) | GKE Autopilot | Infrastructure | Accepted |
+| [D-31](#d-31-one-small-cloud-sql-instance-reached-only-via-the-auth-proxy) | One small Cloud SQL instance, reached only via the Auth Proxy | Infrastructure | Accepted |
+| [D-32](#d-32-secrets-never-touch-git-or-disk) | Secrets never touch git or disk | Security | Accepted |
+| [D-33](#d-33-local-terraform-state) | Local Terraform state | Infrastructure | Accepted |
+| [D-34](#d-34-fresh-project-bootstrap-and-an-api-readiness-gate) | Fresh-project bootstrap and an API readiness gate | Infrastructure | Accepted |
+| [D-35](#d-35-teardown-order-and-a-billable-resource-audit) | Teardown order and a billable-resource audit | Infrastructure | Accepted |
+| [D-36](#d-36-seed-mlflow-on-each-demo-instead-of-persisting-cloud-sql) | Seed MLflow on each demo instead of persisting Cloud SQL | Infrastructure | Accepted |
+| [D-37](#d-37-project-outside-the-organization) | Project outside the organization | Infrastructure | Accepted |
+| [D-38](#d-38-two-kubernetes-flavours-local-base--gke-overlay) | Two Kubernetes flavours: local base + GKE overlay | Kubernetes | Accepted |
+| [D-39](#d-39-cloud-sql-auth-proxy-as-a-native-sidecar) | Cloud SQL Auth Proxy as a native sidecar | Kubernetes | Accepted |
+| [D-40](#d-40-mlflow-server-image-and-sizing) | MLflow server image and sizing | Kubernetes | Accepted |
+| [D-41](#d-41-measured-resource-sizing-requests--limits) | Measured resource sizing; requests == limits | Kubernetes | Accepted |
+| [D-42](#d-42-deploy-time-placeholders-discovered-not-stored) | Deploy-time placeholders, discovered not stored | Kubernetes | Accepted |
+| [D-43](#d-43-leaked-credentials-rotate-first-then-scrub-history) | Leaked credentials: rotate first, then scrub history | Security | Accepted |
+| [D-44](#d-44-pin-everything-that-can-drift) | Pin everything that can drift | Reproducibility | Accepted |
+| [D-45](#d-45-a-regression-test-for-every-bug-fixed) | A regression test for every bug fixed | Testing | Accepted |
+| [D-46](#d-46-feature-branches-prs-and-merge-commits) | Feature branches, PRs, and merge commits | Workflow | Accepted |
+| [D-47](#d-47-measure-seed-variance-before-claiming-improvements) | Measure seed variance before claiming improvements | Experiments | Accepted |
+
+---
+
+## Scope
+
+### D-01: Portfolio-first scope; keep the full MLOps stack
+- **Status**: Accepted (2026-10-10)
+- **Context**: The project exists to demonstrate MLOps skills in interviews. It had grown many components, some half-built.
+- **Decision**: Keep the components that show distinct, transferable skills (GKE, Cloud SQL, MLflow, Airflow, DVC, Terraform, CI/CD). Simplify or remove everything else: the ensemble, the staging overlay, unused preprocessing, and eight experiment scripts.
+- **Why**: Each kept component answers an interview question ("how do you deploy, track, version, orchestrate?"). Breadth that doesn't work is a liability. A reviewer finds the one broken piece and discounts the rest.
+- **Trade-offs**: A larger operational surface than the problem strictly needs. Mitigated by keeping cloud infra ephemeral (D-28).
+- **Alternatives**: Collapsing to Cloud Run + SQLite would be cheaper and simpler, but it wouldn't demonstrate the target skills.
+
+### D-02: Research tool, not a medical device
+- **Status**: Accepted (2026-10-10). The action-table rewording is planned.
+- **Context**: The API maps predictions to actions such as "Activate cath lab". PTB-XL's MI labels don't distinguish acute from old infarction.
+- **Decision**: Label the system clearly as non-clinical (README). Explanations describe *model attention*, not ECG findings (D-19). The action table will be reworded as decision support before any UI work.
+- **Why**: Overclaiming clinical capability is the fastest way to lose credibility with a technical reviewer, and it's genuinely unsafe.
+- **Where**: `README.md`, `src/ml/inference/action_mapping.json`, `src/ml/explainability/explainer.py`
+
+---
+
+## Data
+
+### D-03: PTB-XL 1.0.3, versioned with DVC on GCS
+- **Status**: Accepted
+- **Context**: Training must be reproducible from a known data version.
+- **Decision**: Use PTB-XL 1.0.3 (21,799 records). Track it with DVC (`data/ptb-xl.dvc`) and push to `gs://<project>-dvc`. Record the DVC md5 on every MLflow run (D-14).
+- **Why**: PTB-XL is public, well documented, has an official benchmark, and ships patient-wise folds (D-05). DVC keeps 3 GB out of git while pinning the exact version.
+- **Trade-offs**: A second tool to learn. The remote must exist before `dvc pull` works. The dataset can always be re-downloaded from PhysioNet, so the remote is a convenience rather than the only copy.
+- **Where**: `data/ptb-xl.dvc`, `.dvc/config`, `infra/terraform/foundation/storage.tf`
+
+### D-04: Official superclass label aggregation
+- **Status**: Accepted (2026-10-10)
+- **Context**: The original code mapped SCP codes to superclasses with a hand-written dictionary that covered only some codes.
+- **Decision**: Aggregate with `scp_statements.csv` (`diagnostic == 1` → `diagnostic_class`), as in the PTB-XL benchmark. Drop records with no diagnostic superclass. This leaves 21,388 records.
+- **Why**: It makes results comparable to published numbers, and it's the dataset authors' own definition.
+- **Where**: `src/ml/training/data.py::load_metadata`
+
+### D-05: Patient-wise `strat_fold` split
+- **Status**: Accepted (2026-10-10). Supersedes the random 80/10/10 splits.
+- **Context**: The audit found that random splits put about 17% of test records next to the same patient's ECGs in training. The ensemble was re-split with different settings, so 72% of its "test" set was training data for one member model.
+- **Decision**: Use PTB-XL's `strat_fold`: folds 1–8 train (17,084), fold 9 validation (2,146), fold 10 test (2,158). Every record of a patient is in one fold.
+- **Why**: It's the only split that measures generalization to *new patients*, which is what the model is for. It's also the benchmark's split, so the numbers are comparable.
+- **Trade-offs**: Lower headline numbers than before (D-13).
+- **Where**: `src/ml/training/data.py::split_by_fold`; test: `tests/unit/test_training.py::test_patients_do_not_cross_splits`
+
+### D-06: Decode signals once into a float16 memmap cache
+- **Status**: Accepted (2026-10-10)
+- **Context**: Decoding WFDB files on every epoch made I/O the training bottleneck.
+- **Decision**: Decode every record once into `data/cache/signals_500hz_f16.npy` (2.6 GB memmap), keyed by an `ecg_id` index. Datasets open the memmap lazily per DataLoader worker. Decode with a thread pool, not processes.
+- **Why**: About a minute once, instead of minutes every epoch. float16 halves disk use, and the precision loss is far below ECG measurement noise. Threads avoid macOS spawn issues and work inside Airflow workers.
+- **Trade-offs**: 2.6 GB of local disk. The cache is rebuilt if the record set changes.
+- **Where**: `src/ml/training/data.py::build_signal_cache`
+
+---
+
+## Preprocessing
+
+### D-07: One preprocessing function shared by training and serving
+- **Status**: Accepted (2026-10-11)
+- **Context**: Training and inference preprocessed separately. A third, unused module (bandpass filter, 250 Hz) was what the tests covered.
+- **Decision**: A single `prepare_ecg()` handles everything: orient to (12, n), resample by duration to 500 Hz, take the first 10 s, then per-lead z-score. Both the training dataset and the API call it. The unused module was removed.
+- **Why**: Train/serve skew is one of the most common silent ML production bugs. One function makes it structurally impossible.
+- **Trade-offs**: Signals shorter than 10 s are rejected rather than padded (D-21).
+- **Where**: `src/ml/preprocessing/signal.py`
+
+---
+
+## Model & training
+
+### D-08: 1D ResNet-18
+- **Status**: Accepted
+- **Context**: The original architecture. Published PTB-XL results show 1D ResNets near the top of the benchmark.
+- **Decision**: Keep the 1D ResNet-18: 12 × 5000 input, 5 sigmoid outputs, about 8.7M parameters. Split `forward` into `forward_features` and `forward_head`.
+- **Why**: Strong and well understood. The split lets explainability take gradients with respect to the feature maps without hooks (D-19).
+- **Alternatives**: ResNet-34, InceptionTime and xresnet1d are candidates in the experiment program (D-47). They'll be adopted only if they beat the gates (D-16).
+- **Where**: `src/ml/models/resnet1d.py`
+
+### D-09: Training recipe and early stopping
+- **Status**: Accepted (2026-10-10)
+- **Decision**: BCE loss (focal loss as an option), AdamW (lr 1e-3, wd 1e-4), ReduceLROnPlateau on validation macro AUC, and early stopping with patience 5. Keep the best-validation checkpoint.
+- **Why**: A standard, defensible baseline. Selecting on validation, never on test, keeps the test fold untouched for the final number.
+- **Observed**: The champion peaked at epoch 13. Training loss kept falling afterward while validation stayed flat, a sign of overfitting that motivates augmentation (D-47).
+- **Where**: `src/ml/training/train.py`
+
+---
+
+## Evaluation
+
+### D-10: Macro AUC primary; thresholds tuned on validation only
+- **Status**: Accepted (2026-10-10). Supersedes the global 0.3 threshold.
+- **Decision**: Macro ROC AUC on the test fold is the headline metric, with per-class AUC alongside. Per-class decision thresholds are chosen to maximize F1 on the **validation** fold, then reported on test with F1, sensitivity and specificity. Thresholds ship with the model (`model_meta.json`).
+- **Why**: AUC is threshold-free and matches the benchmark. A single global threshold ignored very different class prevalences: the tuned thresholds range from 0.21 (HYP) to 0.42 (NORM).
+- **Trade-offs**: F1-optimal thresholds aren't clinically optimal. A real deployment would set sensitivity targets per class.
+- **Where**: `src/ml/training/metrics.py`
+
+### D-11: Calibration measured on every run
+- **Status**: Accepted (2026-10-10)
+- **Decision**: Log expected calibration error (ECE) per class and a reliability diagram for every run.
+- **Why**: The API returns probabilities that people will read as risk. They have to mean what they say. The champion has ECE ≤ 0.04 per class.
+- **Where**: `src/ml/training/metrics.py::expected_calibration_error`, `train.py::reliability_plot`
+
+### D-12: Fairness as subgroup performance against labels
+- **Status**: Accepted (2026-10-10)
+- **Context**: Live monitoring used *demographic parity* of urgent actions. Disease prevalence really does differ by age and sex, so parity flags correct behaviour as bias.
+- **Decision**: The evaluation-time fairness metric is macro AUC per subgroup (male/female; age < 40, 40–65, > 65) against ground truth. The release gate requires a max − min gap ≤ 0.05 (D-16).
+- **Why**: Performance parity asks the right question: is the model *equally accurate* for each group?
+- **Trade-offs**: It needs labels, so it can't run on live traffic. The live bias DAG still uses parity and is due for rework (D-23).
+- **Where**: `src/ml/training/metrics.py::subgroup_auc`, `scripts/promote_model.py`
+
+### D-13: Report the audited number (0.910), not the old 93–94%
+- **Status**: Accepted (2026-10-11)
+- **Decision**: Lead with fold-10 macro AUC **0.910**, with benchmark context (about 0.92–0.93 for the best published 1D CNNs). Explain in the README why earlier numbers were inflated.
+- **Why**: A credible, comparable number beats a big, indefensible one. Finding and fixing your own leakage is itself a demonstration of MLOps judgement.
+- **Where**: `README.md`
+
+---
+
+## Experiment tracking & model registry
+
+### D-14: MLflow with code and data lineage on every run
+- **Status**: Accepted (2026-10-10)
+- **Decision**: Every run logs its config, per-epoch curves, and all evaluation metrics (per class, per subgroup, calibration), plus tags for `git_commit`, `git_dirty`, `data_dvc_md5` and `split`. Lineage is captured **once at run start**.
+- **Why**: Any model can be traced to the exact code and data that produced it. Capturing at the start matters: an early version re-read git at the end, so a commit made during an 85-minute run was recorded as the model's source.
+- **Where**: `src/ml/training/train.py::lineage_tags`
+
+### D-15: Registry aliases (`challenger` / `champion`)
+- **Status**: Accepted (2026-10-10). Supersedes MLflow stages (`Production`).
+- **Decision**: Training registers each new model as `ecg-resnet1d@challenger`. Promotion moves `@champion`.
+- **Why**: Stages are deprecated in MLflow 3. Aliases are explicit, movable pointers, and "challenger vs champion" is the standard pattern.
+- **Where**: `src/ml/training/train.py`, `scripts/promote_model.py`
+
+### D-16: Automated release gates for promotion
+- **Status**: Accepted (2026-10-10)
+- **Decision**: `promote_model.py` promotes the challenger only if (1) its test macro AUC ≥ the champion's, and (2) its subgroup AUC gap ≤ 0.05. It then exports the challenger's exact serving artifacts to `models/`.
+- **Why**: Promotion becomes a policy rather than a judgement call, and fairness can't be traded away for accuracy without it showing up.
+- **Trade-offs**: Gating on the test fold reuses test data for model selection across many experiments. Acceptable at this scale; a held-out "final" fold would be the stricter design.
+- **Where**: `scripts/promote_model.py`
+
+### D-17: Model identity is the weights' sha256
+- **Status**: Accepted (2026-10-10). Supersedes the hard-coded `"resnet18-v0.1.0"`.
+- **Decision**: `model_version = resnet18-<first 12 hex chars of sha256(weights)>`. Every logged prediction carries it. Tuned thresholds in `model_meta.json` apply **only** if its version matches the loaded weights.
+- **Why**: A version string that can't drift from the artifact. A stale metadata file can never silently apply another model's thresholds.
+- **Where**: `src/ml/inference/predictor.py`; tests: `tests/unit/test_inference.py::TestModelMeta`
+
+### D-18: Bake the champion into the image
+- **Status**: Accepted
+- **Decision**: The API image contains `models/best_model.pth` (Git LFS) and `model_meta.json`, exported by promotion. It does not pull from the registry at startup.
+- **Why**: Image = code + model, immutable and reproducible. No runtime dependency on MLflow, and rollback is just the previous image.
+- **Trade-offs**: A new model needs a new image (CD builds one on merge). The image is about 2 GB (slimming is planned).
+- **Alternatives**: Loading `models:/ecg-resnet1d@champion` at startup decouples model releases from code releases, but adds a startup dependency and a moving target. It's worth revisiting if model releases become frequent.
+
+---
+
+## Explainability
+
+### D-19: Explanations: Grad-CAM + gradient × input, no hooks
+- **Status**: Accepted (2026-10-11). Supersedes the tiled Grad-CAM.
+- **Context**: The original Grad-CAM tiled one temporal map across all 12 leads, so every ECG reported V6/V5/V4/V3 as most important. It ran on the raw signal, not the model input, and leaked a module hook per request.
+- **Decision**:
+  - Grad-CAM on the last block gives *when*.
+  - Gradient × input per lead gives *which leads*.
+  - Both come from one `torch.autograd.grad` call on the exact preprocessed tensor that was scored.
+  - Heatmaps are returned at 50 Hz.
+  - Descriptions describe where the model attended, not clinical findings.
+- **Why**: Correct, thread-safe (no shared state on the model), and honest. On the test-fold MI example, the top leads include II and aVF (inferior leads), which is anatomically sensible.
+- **Trade-offs**: About 0.9 s extra latency per explained request on GKE (backward pass).
+- **Where**: `src/ml/explainability/explainer.py`. The optional local-LLM phrasing is disabled in prod (`DISABLE_LLM_EXPLANATIONS`).
+
+---
+
+## Serving
+
+### D-20: API runtime behaviour
+- **Status**: Accepted (2026-10-11)
+- **Decisions**:
+  - The model loads at startup; `/ready` returns 503 until it's loaded, while `/health` stays up.
+  - CPU-bound inference runs in a threadpool, so the event loop stays responsive.
+  - Prediction logging to Postgres is **best-effort**, with a 5 s connect timeout. A database outage never fails a prediction or pulls pods out of rotation.
+  - The API creates its own schema (idempotent) on first connection.
+- **Why**: Readiness should reflect the ability to serve. Logging is important but secondary to answering. Schema creation fixes a real bug: a fresh Cloud SQL instance had no `predictions` table, so logging failed silently.
+- **Where**: `src/api/main.py`, `src/api/routes/health.py`, `src/api/routes/predict.py`, `src/db.py`
+
+### D-21: Strict input contract and a safe fallback
+- **Status**: Accepted (2026-10-11)
+- **Decisions**:
+  - Input: 12 leads, at least 10 s, `sampling_rate` 100–2000 Hz; resampled by duration.
+  - NaN, inf or ragged leads return 400.
+  - When no class exceeds its threshold, the API recommends "manual ECG review" rather than implying a normal ECG.
+- **Why**: Previously `sampling_rate` was ignored, so any length was stretched to 5000 samples. The no-confident-class path crashed with a 500. "Not confident" must never be presented as "normal".
+
+### D-22: Public, unauthenticated API
+- **Status**: Accepted as a limitation
+- **Decision**: The demo API has no authentication or rate limiting. CORS allows any origin but no credentials.
+- **Why**: It runs only for short demos (D-28), and interviewers need to hit it without setup.
+- **Trade-offs**: Not acceptable for real data. An API key or IAP would be the first change before any persistent deployment.
+
+---
+
+## Monitoring & orchestration
+
+### D-23: Monitoring: prediction log + Prometheus + Airflow DAGs
+- **Status**: Accepted. Rework planned.
+- **Decision**: Every prediction is logged to Postgres (inputs' metadata, outputs, model version, latency). `/metrics` exposes Prometheus counters and histograms. Airflow DAGs run Evidently drift checks (hourly) and bias checks (daily) and email on alerts.
+- **Known gaps**: Drift watches metadata and output distributions, not the ECG signal itself. The live bias check uses demographic parity (see D-12).
+- **Planned**: Signal-level drift features, and a retraining DAG that closes the loop (drift → retrain → gates → register).
+- **Where**: `src/monitoring/`, `airflow/dags/`
+
+### D-24: Airflow in local docker-compose
+- **Status**: Accepted
+- **Decision**: Run Airflow locally with docker-compose. SMTP credentials and alert recipients come from a gitignored `docker/.env.airflow`.
+- **Why**: It demonstrates the same skills (DAGs, operators, XCom, branching, alerting) at $0.
+- **Alternatives**: Cloud Composer starts at hundreds of dollars a month. Airflow on GKE via Helm would be heavy for an ephemeral cluster.
+- **Where**: `docker/docker-compose.airflow.yml`
+
+---
+
+## CI/CD
+
+### D-25: CI tests what would break a deploy
+- **Status**: Accepted (2026-10-11). Supersedes CI that only ran `uv sync`.
+- **Decision**: On every PR and push, CI runs:
+  - ruff
+  - pytest against the **real** LFS model, with coverage
+  - a kustomize render of both overlays, plus a guard that only the four deploy-time placeholders remain
+  - `terraform fmt -check` and `validate` for both stacks
+  - Docker builds of both images
+- **Why**: Each job catches a class of failure that would otherwise surface during a paid deploy. CI had been reduced to dependency installation and passed without testing anything.
+- **Where**: `.github/workflows/ci.yml`
+
+### D-26: CD: gated, switchable, smoke-tested, self-rolling-back
+- **Status**: Accepted (2026-10-11). Supersedes deploy-on-every-push.
+- **Decision**:
+  - CD runs only after CI succeeds on `main` (`workflow_run`), or manually (`workflow_dispatch`).
+  - It runs only when the `DEPLOY_ENABLED` repo variable is `true`.
+  - It builds the exact commit that passed, deploys with the same script used locally, smoke-tests both services, and runs `kubectl rollout undo` on failure.
+- **Why**: Never deploy untested code. Never deploy to infrastructure that's torn down. Never leave a broken rollout in place.
+- **Where**: `.github/workflows/cd.yml`, `scripts/deploy_gke.sh`
+
+### D-27: Keyless GitHub → GCP auth
+- **Status**: Accepted (2026-10-11). Supersedes the `GCP_SA_KEY` JSON secret.
+- **Decision**: Workload Identity Federation. GitHub's OIDC token is exchanged for short-lived credentials, and only `assertion.repository == <this repo> && ref == main` qualifies. The deployer service account has the minimum roles needed: registry writer, GKE developer, Cloud SQL viewer, and accessor on two secrets.
+- **Why**: There is no long-lived key to leak, which is precisely how this project's previous credentials ended up public.
+- **Where**: `infra/terraform/foundation/github_wif.tf`
+
+---
+
+## Infrastructure
+
+### D-28: Two Terraform stacks split by lifetime
+- **Status**: Accepted (2026-10-11)
+- **Decision**:
+  - `foundation/` is permanent: budget and kill switch, DVC and MLflow buckets, Artifact Registry, WIF.
+  - `platform/` is ephemeral: GKE, Cloud SQL, workload identities, DB secrets.
+  - `make demo-up` / `make demo-down` create and destroy the platform.
+- **Why**: The project is shown only in interviews. Pieces that are cheap and stateful persist; pieces that are expensive and stateless don't. A demo costs about $0.35, and idle cost is cents a month.
+- **Trade-offs**: About 15 minutes to spin up. The platform's database state is lost on teardown (handled by D-36).
+- **Where**: `infra/terraform/`, `Makefile`, `infra/README.md`
+
+### D-29: Hard budget cap via a kill switch
+- **Status**: Accepted (2026-10-11)
+- **Context**: The original project ran an always-on Cloud SQL instance for months unnoticed, because alerts went to an unread inbox.
+- **Decision**:
+  - A $10/month budget, alerting at 50%, 90% and 100% of actual spend and at 100% of forecast, to the **main** inbox.
+  - At 100% of actual spend, Pub/Sub triggers a gen2 Cloud Function that **unlinks billing** from the project.
+  - The decision logic is a pure, unit-tested function; forecasts never trigger it.
+- **Why**: GCP budgets only alert. This actually stops spending.
+- **Trade-offs**: Budget data lags by hours, so spend can overshoot slightly. Disabling billing stops, and may eventually delete, billable resources. That's acceptable for ephemeral demo infrastructure.
+- **Verified**: A real Cloud Billing notification and a synthetic message both reached the function in production.
+- **Where**: `infra/terraform/foundation/kill_switch.tf`, `kill_switch/`
+
+### D-30: GKE Autopilot
+- **Status**: Accepted
+- **Decision**: An Autopilot cluster in us-central1, REGULAR channel, deletion protection off.
+- **Why**: Billed per pod request, not per node. GKE's free tier covers the cluster fee for one cluster, and there are no node pools to manage.
+- **Alternatives**:
+  - GKE Standard needs a node pool that bills even when idle.
+  - Cloud Run is cheaper still, but doesn't demonstrate Kubernetes.
+
+### D-31: One small Cloud SQL instance, reached only via the Auth Proxy
+- **Status**: Accepted (2026-10-11)
+- **Decision**:
+  - Postgres 15 on db-f1-micro (Enterprise edition), zonal, 10 GB HDD.
+  - Two databases (`ecg_predictions`, `mlflow`) on one instance.
+  - A public IP with **no authorized networks**, so only the IAM-authenticated Auth Proxy can connect.
+  - No backups, no HA, no deletion protection.
+  - A random name suffix each time.
+- **Why**: The cheapest tier, and one instance serves both needs. Proxy-only access gives IAM authentication without a VPC peering setup. The console's "health issues" are deliberate for an ephemeral demo: the sources of truth are git, DVC and the GCS artifacts. Instance names can't be reused for about a week, hence the suffix.
+- **Where**: `infra/terraform/platform/main.tf`
+
+### D-33: Local Terraform state
+- **Status**: Accepted
+- **Decision**: State lives locally (gitignored). Platform state contains generated DB passwords.
+- **Why**: There's a single operator; remote state adds a bootstrap dependency without benefit.
+- **Revisit when**: A second person applies, or applies run from CI. Then use a GCS backend with locking.
+
+### D-34: Fresh-project bootstrap and an API readiness gate
+- **Status**: Accepted (2026-10-12)
+- **Context**: The first `apply` on a new project failed twice.
+  1. With `user_project_override` (required for the Budgets API), Terraform bills its calls to the project, so it couldn't enable the very APIs it needed.
+  2. Service accounts were created in parallel with enabling the IAM API.
+- **Decision**: `make foundation` enables four bootstrap APIs with gcloud first. A 90 s `time_sleep` follows API enablement, and every resource depends on it.
+- **Why**: Enabling an API returns before it's usable everywhere. Only a fresh project exposes this, which is exactly when you rebuild.
+- **Where**: `Makefile`, `infra/terraform/foundation/apis.tf`
+
+### D-35: Teardown order and a billable-resource audit
+- **Status**: Accepted (2026-10-11)
+- **Decision**: `make demo-down` deletes the app namespace on the GKE context *explicitly*, then destroys the platform, then runs `scripts/gcp_inventory.sh`.
+- **Why**: Destroying a cluster can orphan the cloud load balancer created for a `LoadBalancer` Service, about $18/month that nothing would ever clean up. The audit script never prompts, never enables APIs, and never prints "(none)" when a check actually failed.
+- **Where**: `Makefile`, `scripts/gcp_inventory.sh`
+
+### D-36: Seed MLflow on each demo instead of persisting Cloud SQL
+- **Status**: Accepted (2026-10-12)
+- **Decision**: After deploy, `make seed-mlflow` copies the champion's run (params, every metric point, lineage tags, artifacts) from the local MLflow, and registers `ecg-resnet1d@champion` under it. It's idempotent.
+- **Why**: It keeps the platform fully ephemeral at $0 idle, while interviewers always see the real experiment and registry.
+- **Alternatives**: Keeping Cloud SQL stopped between demos would persist history for about $1–4/month, but makes the database a pet.
+- **Verified**: The model loaded from the cluster registry gives a 0.0 max logit difference vs local.
+- **Where**: `scripts/seed_mlflow.py`
+
+### D-37: Project outside the organization
+- **Status**: Accepted (2026-10-12)
+- **Decision**: `ecg-mlops-sm26` has no parent organization.
+- **Why**: Organization policies (for example, on external load balancers or keys) could block the demo, and a single-person project gains nothing from org membership.
+
+---
+
+## Kubernetes
+
+### D-38: Two Kubernetes flavours: local base + GKE overlay
+- **Status**: Accepted (2026-10-11). Supersedes base + staging + prod.
+- **Decision**:
+  - `k8s/base` is a complete local stack (API, Postgres, MLflow) for minikube.
+  - `k8s/overlays/prod` deletes the local database and volumes, and adds Cloud SQL proxies, Workload Identity and GCS.
+- **Why**: The base runs anywhere for free, and it caught four MLflow bugs before any cloud spend. The staging overlay pinned a stale image and no pipeline used it.
+- **Where**: `k8s/`, `scripts/deploy-minikube.sh`
+
+### D-39: Cloud SQL Auth Proxy as a native sidecar
+- **Status**: Accepted (2026-10-11)
+- **Decision**: The proxy runs as an `initContainer` with `restartPolicy: Always`, pinned to `2.25.4`.
+- **Why**: Native sidecars start before the app and stop after it, so the database tunnel exists at startup and outlives graceful shutdown. Pinning replaced `:latest`.
+
+### D-40: MLflow server image and sizing
+- **Status**: Accepted (2026-10-11)
+- **Decision**:
+  - A custom image: MLflow 3.8.0 + psycopg2 + google-cloud-storage, with **every shared dependency constrained to `uv.lock`**.
+  - Postgres backend store; artifacts proxied with `--serve-artifacts` to a volume (local) or GCS (prod).
+  - `MLFLOW_TRACKING_URI` pointing at the server itself.
+  - `--allowed-hosts` with port wildcards; a writable `WORKDIR`; 1 worker.
+- **Why**: Each item fixes a bug found on minikube:
+  - An unconstrained install pulled SQLAlchemy 2.1, which MLflow 3.8 can't import.
+  - The server's internal client fell back to `./mlruns` in an unwritable `/` when registering models.
+  - MLflow 3 matches Host headers including the port.
+- **Where**: `docker/Dockerfile.mlflow`, `k8s/base/mlflow.yaml`
+
+### D-41: Measured resource sizing; requests == limits
+- **Status**: Accepted (2026-10-11)
+- **Decision**: API 500m / 1 GiB; MLflow 500m / 1 GiB; proxies 100m / 128 MiB. Requests equal limits. Both apps have startup probes.
+- **Why**: Measured, not guessed. MLflow sat at about 460 MiB idle and was OOM-killed at 512 MiB; at 250m CPU half its startup was throttled and readiness flapped for minutes. Autopilot bills requests, so equal requests and limits make cost predictable.
+
+### D-42: Deploy-time placeholders, discovered not stored
+- **Status**: Accepted (2026-10-11)
+- **Decision**:
+  - The prod overlay contains four `${...}` placeholders (project, SQL connection, two images).
+  - `deploy_gke.sh` discovers their values with gcloud, copies DB passwords from Secret Manager, and renders with `envsubst`.
+  - CI fails if any other placeholder appears.
+- **Why**: There are no project-specific values in git, and CD needs no Terraform state.
+- **Alternatives**: Kustomize `replacements` is more native but much harder to read. Gitignored env files can't be reproduced in CI.
+
+---
+
+## Security
+
+### D-32: Secrets never touch git or disk
+- **Status**: Accepted (2026-10-11)
+- **Decision**:
+  - DB passwords are generated by Terraform and stored in Secret Manager, then copied into k8s Secrets at deploy time.
+  - Locally, minikube gets a random password from the deploy script.
+  - SMTP credentials live in a gitignored env file with an `.example` template.
+  - `.dockerignore` keeps env files and keys out of build contexts.
+  - GitGuardian scans every PR.
+- **Why**: The project previously published a Gmail app password and a Cloud SQL password in a public repo.
+
+### D-43: Leaked credentials: rotate first, then scrub history
+- **Status**: Accepted (2026-10-10)
+- **Decision**: Revoke the leaked Gmail app password; the leaked database disappeared with the deleted project. Then rewrite history with `git filter-repo --replace-text` and force-push.
+- **Why**: Rotation is what actually removes the risk. Scrubbing is hygiene, because copies may already exist (GitHub keeps PR refs, and forks and scrapers exist).
+
+---
+
+## Reproducibility & engineering practice
+
+### D-44: Pin everything that can drift
+- **Status**: Accepted
+- **Decision**: Pin all of these:
+  - Python dependencies (`uv.lock`)
+  - the uv image (`0.9.18`) and the proxy image (`2.25.4`)
+  - the MLflow server dependencies (constrained by the lock)
+  - Terraform providers, with multi-platform lock hashes
+  - Python 3.11 everywhere
+  - CPU-only torch wheels on Linux; default wheels on macOS
+- **Why**: Every unpinned dependency so far caused a real failure. On macOS the CPU torch index also made every `uv run` reinstall torch, breaking any process running at the same time.
+
+### D-45: A regression test for every bug fixed
+- **Status**: Accepted (2026-10-11)
+- **Decision**: Each fixed bug gets a test, and the test is checked to **fail on the old code**. The data pipeline is tested on synthetic fixtures; inference and API tests use the real model.
+- **Why**: A test that passes on the buggy code proves nothing. The 10 original bug tests all fail on the pre-fix code.
+- **Where**: `tests/unit/` (51 tests)
+
+### D-46: Feature branches, PRs, and merge commits
+- **Status**: Accepted
+- **Decision**: All work happens on feature branches and goes through PRs with descriptive bodies. PRs are merged with merge commits (not squash), so each self-contained, explained commit survives. Commits and PRs carry no AI attribution.
+- **Why**: History reads as a design narrative, which is useful in reviews and interviews.
+
+---
+
+## Experiments
+
+### D-47: Measure seed variance before claiming improvements
+- **Status**: Accepted (2026-10-12). In progress.
+- **Context**: Only one model has been trained on the leak-free split. Without knowing run-to-run noise, no experiment can claim an improvement.
+- **Decision**: Retrain the baseline with seeds 43 and 44, which together with the champion's seed 42 gives three runs. Report macro AUC as mean ± std. Group runs with `--tag study=<name>`. Then run targeted experiments: augmentation (overfitting), class-balanced or focal loss (HYP), ResNet-34 (capacity), and a multi-seed ensemble. The release gates (D-16) decide promotion.
+- **Why**: Improvements smaller than seed noise aren't improvements. Most portfolios skip this step.
+- **Where**: `scripts/train.py --tag`, MLflow experiment `ecg-ptbxl`
+
+---
+
+## Known limitations
+
+| Limitation | Impact | Planned response |
+|---|---|---|
+| HYP is weak (AUC 0.83, F1 0.46) | Lowest-confidence class | Experiments (D-47) |
+| About 2 AUC points lower for women and patients over 40 | Fairness gap within the gate, but real | Track per experiment; consider reweighting |
+| The action table reads as orders | Clinically inappropriate framing | Reword as decision support (D-02) |
+| Drift monitoring ignores the signal itself | Can't detect device or population shift | Signal-level drift features (D-23) |
+| Live bias check uses demographic parity | Flags real prevalence differences | Label-based checks (D-12, D-23) |
+| No API auth or rate limiting | Demo-only exposure | Add API key or IAP before persistent use (D-22) |
+| About 2 GB API image | Slower deploys and cold starts | Split serving, training and monitoring dependencies |
+| Local Terraform state | Single operator only | GCS backend when needed (D-33) |
+
+---
+
+## Changelog
+
+| Date | Change |
+|---|---|
+| 2026-10-10 | Audit: leaked secrets, leaky splits, invalid ensemble metric, non-functional CI. D-01, D-02, D-04, D-05, D-43 |
+| 2026-10-11 | PR #2: security fixes, inference/explainability fixes, training pipeline, CI/CD, README rewrite. D-06–D-21, D-25, D-26, D-32, D-44, D-45 |
+| 2026-10-11 | PR #3: Terraform foundation + platform, kill switch, WIF. D-27–D-31, D-33 |
+| 2026-10-11 | PR #4: k8s rewire, MLflow server, deploy script, minikube-found fixes. D-35, D-38–D-42 |
+| 2026-10-12 | PR #5: fresh-project fixes, MLflow seeding, DVC on the new bucket. D-34, D-36, D-37 |
+| 2026-10-12 | First live GKE deploy verified end to end. Seed-variance study started. D-47 |

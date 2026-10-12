@@ -97,6 +97,10 @@ flowchart LR
 
 ### MLOps practices
 
+Every choice below, with its reasoning, trade-offs and rejected alternatives, is
+recorded in [docs/DECISIONS.md](docs/DECISIONS.md).
+
+
 | Concern | How it's handled | Where |
 |---|---|---|
 | Data versioning | PTB-XL tracked with DVC (md5 recorded on every run) | `data/ptb-xl.dvc` |
