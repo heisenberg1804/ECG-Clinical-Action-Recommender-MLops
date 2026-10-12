@@ -7,7 +7,7 @@ resource "google_storage_bucket" "dvc" {
   public_access_prevention    = "enforced"
   force_destroy               = false # Holds the versioned dataset
 
-  depends_on = [google_project_service.enabled]
+  depends_on = [time_sleep.apis_ready]
 }
 
 resource "google_storage_bucket" "mlflow" {
@@ -17,7 +17,7 @@ resource "google_storage_bucket" "mlflow" {
   public_access_prevention    = "enforced"
   force_destroy               = false # Holds registered model artifacts
 
-  depends_on = [google_project_service.enabled]
+  depends_on = [time_sleep.apis_ready]
 }
 
 resource "google_artifact_registry_repository" "images" {
@@ -43,5 +43,5 @@ resource "google_artifact_registry_repository" "images" {
     }
   }
 
-  depends_on = [google_project_service.enabled]
+  depends_on = [time_sleep.apis_ready]
 }

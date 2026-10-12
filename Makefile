@@ -29,8 +29,15 @@ mlflow:  ## MLflow UI on :5001
 	uv run mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5001
 
 # ---------------- Cloud (see infra/README.md) ----------------
-.PHONY: foundation demo-up deploy demo-down inventory
+.PHONY: foundation demo-up deploy seed-mlflow demo-down inventory
+# Terraform bills its own API calls to the project (needed for the Budgets API),
+# so on a fresh project these must be on before Terraform can do anything
+BOOTSTRAP_APIS := cloudresourcemanager.googleapis.com serviceusage.googleapis.com \
+	cloudbilling.googleapis.com billingbudgets.googleapis.com
+
 foundation:  ## Apply the long-lived stack (budget kill switch, buckets, registry, WIF)
+	@test -n "$(PROJECT)" || { echo "Set project_id in infra/terraform/foundation/terraform.tfvars"; exit 1; }
+	gcloud services enable $(BOOTSTRAP_APIS) --project $(PROJECT)
 	$(TF)/foundation init -input=false
 	$(TF)/foundation apply
 
@@ -40,6 +47,12 @@ demo-up:  ## Create the billable platform (GKE Autopilot + Cloud SQL)
 
 deploy:  ## Deploy :latest images to GKE from this machine (CD does this on merge)
 	scripts/deploy_gke.sh $(PROJECT)
+
+seed-mlflow:  ## Copy the local champion run + model into MLflow on GKE (after deploy)
+	@kubectl -n ecg-prod port-forward svc/mlflow 5055:5000 >/dev/null 2>&1 & PF=$$!; \
+	trap "kill $$PF" EXIT; \
+	until curl -s -o /dev/null localhost:5055/health; do sleep 1; done; \
+	uv run python scripts/seed_mlflow.py --target-uri http://localhost:5055
 
 demo-down:  ## Delete the app (releases its load balancer), destroy the platform, verify
 	-kubectl delete namespace ecg-prod --wait --timeout=5m

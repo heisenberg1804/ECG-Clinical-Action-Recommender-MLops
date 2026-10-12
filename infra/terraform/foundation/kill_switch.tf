@@ -4,7 +4,7 @@
 
 resource "google_pubsub_topic" "budget" {
   name       = "budget-alerts"
-  depends_on = [google_project_service.enabled]
+  depends_on = [time_sleep.apis_ready]
 }
 
 resource "google_monitoring_notification_channel" "email" {
@@ -14,7 +14,7 @@ resource "google_monitoring_notification_channel" "email" {
   labels = {
     email_address = each.value
   }
-  depends_on = [google_project_service.enabled]
+  depends_on = [time_sleep.apis_ready]
 }
 
 resource "google_billing_budget" "monthly" {
@@ -50,6 +50,8 @@ resource "google_billing_budget" "monthly" {
     monitoring_notification_channels = [for c in google_monitoring_notification_channel.email : c.id]
     disable_default_iam_recipients   = false
   }
+
+  depends_on = [time_sleep.apis_ready]
 }
 
 # ---------------- Kill switch function ----------------
@@ -57,6 +59,8 @@ resource "google_billing_budget" "monthly" {
 resource "google_service_account" "kill_switch" {
   account_id   = "budget-kill-switch"
   display_name = "Unlinks billing when the budget is exhausted"
+
+  depends_on = [time_sleep.apis_ready]
 }
 
 # Project Billing Manager includes resourcemanager.projects.deleteBillingAssignment
@@ -77,6 +81,8 @@ resource "google_project_iam_member" "kill_switch_events" {
 resource "google_service_account" "function_builder" {
   account_id   = "function-builder"
   display_name = "Builds Cloud Functions"
+
+  depends_on = [time_sleep.apis_ready]
 }
 
 resource "google_project_iam_member" "function_builder" {
@@ -97,7 +103,7 @@ resource "google_storage_bucket" "functions" {
   uniform_bucket_level_access = true
   public_access_prevention    = "enforced"
   force_destroy               = true
-  depends_on                  = [google_project_service.enabled]
+  depends_on                  = [time_sleep.apis_ready]
 }
 
 data "archive_file" "kill_switch" {

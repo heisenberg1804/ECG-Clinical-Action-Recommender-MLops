@@ -1,4 +1,4 @@
 [core]
     remote = gcs
 ['remote "gcs"']
-    url = gs://ecg-mlops-data/dvc-cache/
+    url = gs://ecg-mlops-sm26-dvc/dvc-cache
