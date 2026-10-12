@@ -16,7 +16,7 @@ import os
 import random
 import subprocess
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import matplotlib
@@ -68,6 +68,7 @@ class TrainConfig:
     experiment: str = "ecg-ptbxl"
     run_name: str | None = None
     registered_model: str | None = "ecg-resnet1d"
+    tags: dict[str, str] = field(default_factory=dict)  # e.g. {"study": "seed-variance"}
 
 
 class FocalLoss(nn.Module):
@@ -194,8 +195,8 @@ def train(cfg: TrainConfig) -> dict:
     with mlflow.start_run(run_name=cfg.run_name) as run:
         # Captured once, at start: commits made mid-run must not change the recorded lineage
         lineage = lineage_tags()
-        mlflow.set_tags(lineage)
-        mlflow.log_params({k: str(v) for k, v in asdict(cfg).items()})
+        mlflow.set_tags({**lineage, **cfg.tags})
+        mlflow.log_params({k: str(v) for k, v in asdict(cfg).items() if k != "tags"})
         mlflow.log_params({f"n_{k}": len(v) for k, v in splits.items()})
 
         # ---------------- Train with early stopping on val macro AUC ----------------
