@@ -64,10 +64,14 @@ locals {
   }
 }
 
+# ABANDON: on destroy, drop these from state instead of deleting them through the
+# API. Postgres refuses to drop a user that owns objects (the API creates its
+# tables as ecg_user), and deleting the instance removes users and databases anyway.
 resource "google_sql_database" "db" {
-  for_each = local.databases
-  name     = each.value.db
-  instance = google_sql_database_instance.main.name
+  for_each        = local.databases
+  name            = each.value.db
+  instance        = google_sql_database_instance.main.name
+  deletion_policy = "ABANDON"
 }
 
 resource "random_password" "db" {
@@ -77,10 +81,11 @@ resource "random_password" "db" {
 }
 
 resource "google_sql_user" "user" {
-  for_each = local.databases
-  name     = each.value.user
-  instance = google_sql_database_instance.main.name
-  password = random_password.db[each.key].result
+  for_each        = local.databases
+  name            = each.value.user
+  instance        = google_sql_database_instance.main.name
+  password        = random_password.db[each.key].result
+  deletion_policy = "ABANDON"
 }
 
 # Passwords live in Secret Manager; scripts read them from there to build k8s Secrets
