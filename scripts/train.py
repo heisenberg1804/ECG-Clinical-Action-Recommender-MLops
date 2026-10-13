@@ -9,6 +9,7 @@ Usage:
     uv run python scripts/train.py
     uv run python scripts/train.py --loss focal --epochs 40
     uv run python scripts/train.py --limit 256 --epochs 1 --no-register   # smoke test
+    uv run python scripts/train.py --seed 43 --no-register --tag study=seed-variance
 """
 import argparse
 import sys
@@ -38,7 +39,10 @@ def main() -> None:
     p.add_argument("--experiment", default="ecg-ptbxl")
     p.add_argument("--run-name", default=None)
     p.add_argument("--no-register", action="store_true", help="skip Model Registry")
+    p.add_argument("--tag", action="append", default=[], metavar="KEY=VALUE",
+                   help="MLflow run tag, repeatable (e.g. --tag study=seed-variance)")
     a = p.parse_args()
+    tags = dict(t.split("=", 1) for t in a.tag)
 
     train(TrainConfig(
         data_dir=Path(a.data_dir),
@@ -54,6 +58,7 @@ def main() -> None:
         experiment=a.experiment,
         run_name=a.run_name,
         registered_model=None if a.no_register else "ecg-resnet1d",
+        tags=tags,
     ))
 
 
