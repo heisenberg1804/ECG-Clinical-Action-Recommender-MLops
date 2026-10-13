@@ -12,6 +12,14 @@ const LAYOUT = [
 const WINDOW_S = 2.5;
 const MV_RANGE = [-1.5, 1.5];        // 3 mV tall rows
 const MM_PER_S = 25, MM_PER_MV = 10;  // Standard paper speed and gain
+const CLASSES = [
+  ["NORM", "Normal ECG"],
+  ["MI", "Myocardial infarction"],
+  ["STTC", "ST/T change"],
+  ["CD", "Conduction disturbance"],
+  ["HYP", "Hypertrophy"],
+];
+const NAME = Object.fromEntries(CLASSES);
 
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
@@ -26,6 +34,21 @@ const store = {  // Per-viewer convenience only; the page works without it
   get: (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
   set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* ignore */ } },
 };
+
+// Model attention for this lead, shaded behind the trace: one bar per heatmap sample
+function drawAttention(u, heat, heatFs, t0) {
+  if (!heat) return;
+  const { ctx } = u, { top, height } = u.bbox, dt = 1 / heatFs;
+  ctx.save();
+  ctx.fillStyle = css("--accent");
+  heat.forEach((v, i) => {
+    if (v < 0.15) return;  // Keep low-attention regions clean
+    const x0 = u.valToPos(t0 + i * dt, "x", true), x1 = u.valToPos(t0 + (i + 1) * dt, "x", true);
+    ctx.globalAlpha = 0.45 * v;
+    ctx.fillRect(x0, top, x1 - x0 + 0.5, height);
+  });
+  ctx.restore();
+}
 
 // ECG paper: 1 mm minor squares (0.04 s, 0.1 mV) and 5 mm major squares (0.2 s, 0.5 mV)
 function drawPaper(u) {
@@ -50,7 +73,7 @@ function drawPaper(u) {
   ctx.restore();
 }
 
-function Trace({ times, values, t0, t1, width, label }) {
+function Trace({ times, values, t0, t1, width, label, heat, heatFs }) {
   const el = useRef(null);
   useEffect(() => {
     if (!width) return;
@@ -62,14 +85,14 @@ function Trace({ times, values, t0, t1, width, label }) {
       scales: { x: { time: false, range: [t0, t1] }, y: { range: MV_RANGE } },
       axes: [{ show: false }, { show: false }],
       series: [{}, { stroke: css("--trace"), width: 1.3, points: { show: false } }],
-      hooks: { drawClear: [drawPaper] },
+      hooks: { drawClear: [drawPaper, (u) => drawAttention(u, heat, heatFs, t0)] },
     }, [times, values], el.current);
     return () => plot.destroy();
-  }, [times, values, t0, t1, width]);
+  }, [times, values, t0, t1, width, heat]);
   return html`<div class="lead"><span class="name">${label}</span><div ref=${el}></div></div>`;
 }
 
-function EcgSheet({ ecg }) {
+function EcgSheet({ ecg, attention }) {
   const box = useRef(null);
   const [width, setWidth] = useState(0);
   useEffect(() => {
@@ -83,6 +106,12 @@ function EcgSheet({ ecg }) {
   const lead = (name) => ecg.signal_mv[ecg.leads.indexOf(name)];
   const col = Math.floor(Math.max(width, 720) / 4);  // Matches the sheet's min-width (CSS)
   const slice = (arr, c) => arr.slice(Math.round(c * WINDOW_S * fs), Math.round((c + 1) * WINDOW_S * fs));
+  const hfs = attention?.sampling_rate;
+  const heat = (name, c) => {
+    if (!attention) return null;
+    const row = attention.heatmap[ecg.leads.indexOf(name)];
+    return c === null ? row : row.slice(Math.round(c * WINDOW_S * hfs), Math.round((c + 1) * WINDOW_S * hfs));
+  };
 
   return html`
     <div class="sheet" ref=${box}>
@@ -91,14 +120,85 @@ function EcgSheet({ ecg }) {
           ${row.map((name, c) => html`
             <${Trace} label=${name} width=${col}
               times=${slice(times, c)} values=${slice(lead(name), c)}
-              t0=${c * WINDOW_S} t1=${(c + 1) * WINDOW_S} />`)}
+              t0=${c * WINDOW_S} t1=${(c + 1) * WINDOW_S}
+              heat=${heat(name, c)} heatFs=${hfs} />`)}
         </div>`)}
       <div class="rhythm">
         <${Trace} label="II (rhythm)" width=${col * 4} times=${times} values=${lead("II")}
-          t0=${0} t1=${n / fs} />
+          t0=${0} t1=${n / fs} heat=${heat("II", null)} heatFs=${hfs} />
       </div>
-      <div class="scale-note">25 mm/s · 10 mm/mV · small square 0.04 s × 0.1 mV</div>
+      <div class="scale-note">
+        25 mm/s · 10 mm/mV · small square 0.04 s × 0.1 mV
+        ${attention && html` · <span class="attn-key"></span> model attention for ${NAME[attention.diagnosis]}`}
+      </div>
     </div>`;
+}
+
+function ReadPanel({ answer, setAnswer, onReveal, busy }) {
+  const toggle = (c) => setAnswer(answer.includes(c) ? answer.filter((x) => x !== c) : [...answer, c]);
+  return html`
+    <section class="panel">
+      <h2>Your read</h2>
+      <p class="muted">Select every category you see, then reveal the expert label and the model.</p>
+      <div class="chips">
+        ${CLASSES.map(([c, name]) => html`
+          <button class=${"chip" + (answer.includes(c) ? " on" : "")} aria-pressed=${answer.includes(c)}
+            onClick=${() => toggle(c)}><b>${c}</b> ${name}</button>`)}
+      </div>
+      <button class="primary" disabled=${!answer.length || busy} onClick=${onReveal}>Reveal</button>
+    </section>`;
+}
+
+function ProbBar({ c, p, threshold, agree }) {
+  return html`
+    <div class="prob">
+      <span class="cls" title=${NAME[c]}>${c}</span>
+      <span class="bar"><span class="fill" style=${`width:${p * 100}%`}></span>
+        <span class="thr" style=${`left:${threshold * 100}%`} title=${`threshold ${threshold}`}></span></span>
+      <span class="pct">${Math.round(p * 100)}%</span>
+      <span class=${agree ? "ok" : "bad"}>${agree ? "✓" : "✗"}</span>
+    </div>`;
+}
+
+function ResultPanel({ result, thresholds, focus, setFocus }) {
+  const exact = result.student_answer.slice().sort().join() === result.labels.slice().sort().join();
+  const m = result.model;
+  const flags = Object.entries(result.quality_flags);
+  return html`
+    <section class="panel">
+      <h2>${exact ? "Exact match" : "Compare your read"}</h2>
+      <div class="cols">
+        <div>
+          <h3>Cardiologist</h3>
+          <ul class="labels">
+            ${result.labels.map((c) => html`
+              <li><b>${c}</b> ${NAME[c]} <span class="muted">· confidence ${result.label_likelihoods[c] ?? "n/a"}%</span></li>`)}
+          </ul>
+          <h3>You</h3>
+          <ul class="labels">
+            ${CLASSES.map(([c]) => c).filter((c) => result.student_answer.includes(c) || result.labels.includes(c)).map((c) => html`
+              <li><span class=${"mark " + (result.agreement[c].student ? "ok" : "bad")}>${result.agreement[c].student ? "✓" : "✗"}</span>
+                <b>${c}</b> ${result.student_answer.includes(c) ? "selected" : "missed"}</li>`)}
+          </ul>
+          ${result.report && html`<h3>Original report <span class="muted">(German, as written)</span></h3>
+            <p class="report">${result.report.replace(/\s+/g, " ").trim().toLowerCase()}</p>`}
+          ${flags.length > 0 && html`<h3>Recording notes</h3>
+            <p class="muted">${flags.map(([k, v]) => `${k.replace(/_/g, " ")}: ${v}`).join(" · ")}</p>`}
+        </div>
+        <div>
+          <h3>Model <span class="muted">(✓ = agrees with the cardiologist)</span></h3>
+          ${CLASSES.map(([c]) => html`<${ProbBar} c=${c} p=${m.probabilities[c]}
+            threshold=${thresholds[c]} agree=${result.agreement[c].model} />`)}
+          <p class="muted small">Marker on each bar = the model's decision threshold for that class.</p>
+          <h3>Where the model looked</h3>
+          <div class="chips">
+            ${CLASSES.map(([c]) => html`<button class=${"chip small" + (focus === c ? " on" : "")}
+              onClick=${() => setFocus(c)}>${c}</button>`)}
+          </div>
+          ${focus && html`<p class="small">${m.explanations[focus].description}</p>`}
+        </div>
+      </div>
+    </section>`;
 }
 
 function App() {
@@ -106,15 +206,49 @@ function App() {
   const [idx, setIdx] = useState(store.get("ecg.caseIndex", 0));
   const [ecg, setEcg] = useState(null);
   const [error, setError] = useState(null);
+  const [answer, setAnswer] = useState([]);
+  const [result, setResult] = useState(null);
+  const [focus, setFocus] = useState(null);
+  const [attention, setAttention] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [card, setCard] = useState(null);
+  const [score, setScore] = useState(store.get("ecg.score", {}));  // case_id -> exact match?
+
+  useEffect(() => { api("/model/card").then(setCard).catch(() => {}); }, []);
 
   useEffect(() => { api("/cases").then(setCases).catch((e) => setError(e.message)); }, []);
   useEffect(() => {
     if (!cases) return;
     const i = Math.min(idx, cases.cases.length - 1);
     store.set("ecg.caseIndex", i);
-    setEcg(null);
-    api(`/cases/${cases.cases[i].case_id}`).then(setEcg).catch((e) => setError(e.message));
+    setEcg(null); setResult(null); setFocus(null); setAttention(null);
+    const id = cases.cases[i].case_id;
+    setAnswer(store.get(`ecg.answer.${id}`, []));
+    api(`/cases/${id}`).then(setEcg).catch((e) => setError(e.message));
   }, [cases, idx]);
+
+  useEffect(() => {
+    if (!result || !focus) { setAttention(null); return; }
+    api(`/cases/${result.case_id}/explanation/${focus}`).then(setAttention).catch(() => setAttention(null));
+  }, [result, focus]);
+
+  const reveal = async () => {
+    setBusy(true);
+    try {
+      const r = await api(`/cases/${ecg.case_id}/reveal`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ answer }),
+      });
+      setResult(r);
+      setFocus(r.model.predicted[0] || r.primary_label);  // Start where the model was most sure
+      store.set(`ecg.answer.${ecg.case_id}`, answer);
+      if (!(ecg.case_id in score)) {  // Score each case once: the first committed read counts
+        const exact = r.student_answer.slice().sort().join() === r.labels.slice().sort().join();
+        const next = { ...score, [ecg.case_id]: exact };
+        setScore(next); store.set("ecg.score", next);
+      }
+    } catch (e) { setError(e.message); } finally { setBusy(false); }
+  };
 
   if (error) return html`<${Shell}><div class="error">${error}</div><//>`;
   if (!cases) return html`<${Shell}><p class="muted">Loading cases…</p><//>`;
@@ -125,10 +259,14 @@ function App() {
         <span class="title">Case ${idx + 1} of ${cases.n_cases}</span>
         <span class="meta">${c.age ? `${c.age} y` : "age unknown"}, ${c.sex === "M" ? "male" : "female"}</span>
         <span class="spacer"></span>
+        <span class="meta">Score ${Object.values(score).filter(Boolean).length} / ${Object.keys(score).length}</span>
         <button disabled=${idx === 0} onClick=${() => setIdx(idx - 1)}>← Previous</button>
         <button disabled=${idx >= cases.n_cases - 1} onClick=${() => setIdx(idx + 1)}>Next →</button>
       </div>
-      ${ecg ? html`<${EcgSheet} ecg=${ecg} />` : html`<p class="muted">Loading ECG…</p>`}
+      ${ecg ? html`<${EcgSheet} ecg=${ecg} attention=${attention} />` : html`<p class="muted">Loading ECG…</p>`}
+      ${ecg && !result && html`<${ReadPanel} answer=${answer} setAnswer=${setAnswer} onReveal=${reveal} busy=${busy} />`}
+      ${result && card && html`<${ResultPanel} result=${result} thresholds=${card.thresholds}
+        focus=${focus} setFocus=${setFocus} />`}
     <//>`;
 }
 
