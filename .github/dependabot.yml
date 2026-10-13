@@ -1,0 +1,42 @@
+# Dependency updates, grouped so they arrive as a few PRs instead of one per package.
+# Each grouped PR is still a single commit, so it fits the one-commit-per-PR workflow.
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    groups:
+      # Every security fix in one PR, raised as soon as new alerts appear
+      python-security:
+        applies-to: security-updates
+        patterns: ["*"]
+      # Routine minor/patch bumps, once a month. Major versions stay as
+      # individual PRs: those are the ones that break things
+      python-minor-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci(deps)"
+
+  - package-ecosystem: "docker"
+    directory: "/docker"
+    schedule:
+      interval: "monthly"
+    groups:
+      docker-base-images:
+        patterns: ["*"]
+    commit-message:
+      prefix: "build(deps)"
