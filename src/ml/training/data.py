@@ -100,16 +100,49 @@ def build_signal_cache(df: pd.DataFrame, data_dir: Path, cache_dir: Path) -> Pat
     return cache_dir
 
 
+def augment_ecg(signal: np.ndarray, rng: np.random.Generator, fs: int = 500) -> np.ndarray:
+    """
+    Train-time augmentation on a preprocessed (z-scored) 12-lead signal.
+
+    Only transforms that survive per-lead normalization are used. Amplitude
+    scaling would be undone by the z-score at inference and would create a
+    train/serve mismatch.
+    - Gaussian noise (sensor noise)
+    - Baseline wander: low-frequency drift from breathing or movement
+    - Time shift of up to 0.5 s, padded with edge values (no wrap-around)
+    - Lead dropout: one lead zeroed (a detached electrode)
+    """
+    x = signal.copy()
+    n_leads, n = x.shape
+    if rng.random() < 0.5:
+        x += rng.normal(0, 0.05, size=x.shape).astype(np.float32)
+    if rng.random() < 0.5:
+        t = np.arange(n) / fs
+        freq, phase = rng.uniform(0.05, 0.5), rng.uniform(0, 2 * np.pi)
+        x += (rng.uniform(0.05, 0.2) * np.sin(2 * np.pi * freq * t + phase)).astype(np.float32)
+    if rng.random() < 0.5:
+        shift = int(rng.integers(-fs // 2, fs // 2 + 1))
+        if shift > 0:
+            x = np.concatenate([np.repeat(x[:, :1], shift, axis=1), x[:, :-shift]], axis=1)
+        elif shift < 0:
+            x = np.concatenate([x[:, -shift:], np.repeat(x[:, -1:], -shift, axis=1)], axis=1)
+    if rng.random() < 0.2:
+        x[rng.integers(n_leads)] = 0.0
+    return x
+
+
 class PTBXLDataset(Dataset):
     """Serves (signal, labels) from the memmap cache."""
 
-    def __init__(self, df: pd.DataFrame, cache_dir: Path):
+    def __init__(self, df: pd.DataFrame, cache_dir: Path, augment: bool = False):
         index = json.loads((cache_dir / "index.json").read_text())
         row_of = {ecg_id: row for row, ecg_id in enumerate(index)}
         self.rows = np.array([row_of[int(i)] for i in df.index])
         self.labels = np.stack(df.labels.values).astype(np.float32)
         self.signals_path = cache_dir / "signals_500hz_f16.npy"
         self._signals = None  # Opened lazily so each DataLoader worker gets its own handle
+        self.augment = augment
+        self._rng = None  # Per worker, seeded from torch so runs are reproducible
 
     def __len__(self) -> int:
         return len(self.rows)
@@ -118,4 +151,8 @@ class PTBXLDataset(Dataset):
         if self._signals is None:
             self._signals = np.load(self.signals_path, mmap_mode="r")
         signal = prepare_ecg(self._signals[self.rows[idx]].astype(np.float32))
+        if self.augment:
+            if self._rng is None:
+                self._rng = np.random.default_rng(torch.initial_seed() % 2**32)
+            signal = augment_ecg(signal, self._rng)
         return torch.from_numpy(signal), torch.from_numpy(self.labels[idx])
