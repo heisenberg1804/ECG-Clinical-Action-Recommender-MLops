@@ -78,14 +78,14 @@ earlier decision, set the old one's status to `Superseded by D-xx`.
 | [D-50](#d-50-ensembles-are-evaluated-with-the-shared-evaluation-and-logged-as-runs) | Ensembles are evaluated with the shared evaluation and logged as runs | Experiments | Accepted |
 | [D-51](#d-51-defer-serving-the-ensemble-until-the-experiment-program-finishes) | Defer serving the ensemble until the experiment program finishes | Serving | Proposed |
 | [D-52](#d-52-subgroup-metrics-need-confidence-intervals) | Subgroup metrics need confidence intervals | Evaluation | Proposed |
-| [D-53](#d-53-primary-users-are-medical-students-and-residents-learning-ecg-interpretation) | Primary users are medical students and residents learning ECG interpretation | Product | Accepted (design) |
-| [D-54](#d-54-a-fixed-test-fold-only-case-bank-with-precomputed-model-artifacts) | A fixed, test-fold-only case bank with precomputed model artifacts | Product | Accepted (design) |
-| [D-55](#d-55-frontend-preact--htm--uplot-vendored-no-build-step-served-by-fastapi) | Frontend: Preact + htm + uPlot, vendored, no build step, served by FastAPI | Frontend | Accepted (design) |
+| [D-53](#d-53-primary-users-are-medical-students-and-residents-learning-ecg-interpretation) | Primary users are medical students and residents learning ECG interpretation | Product | Accepted (v1a built) |
+| [D-54](#d-54-a-fixed-test-fold-only-case-bank-with-precomputed-model-artifacts) | A fixed, test-fold-only case bank with precomputed model artifacts | Product | Accepted (built) |
+| [D-55](#d-55-frontend-preact--htm--uplot-vendored-no-build-step-served-by-fastapi) | Frontend: Preact + htm + uPlot, vendored, no build step, served by FastAPI | Frontend | Accepted (built) |
 | [D-56](#d-56-the-tutor-is-a-hosted-llm-with-tool-use-grounded-in-case-bank-lookups) | The tutor is a hosted LLM with tool use, grounded in case-bank lookups | Product | Accepted (design) |
 | [D-57](#d-57-answer-locking-via-signed-session-state-the-server-stays-stateless) | Answer locking via signed session state; the server stays stateless | Backend | Accepted (design) |
 | [D-58](#d-58-cost-and-abuse-controls-on-the-chat-endpoint) | Cost and abuse controls on the chat endpoint | Security | Accepted (design) |
 | [D-59](#d-59-llm-quality-is-tested-deterministically-in-ci-and-evaluated-on-demand) | LLM quality is tested deterministically in CI and evaluated on demand | Testing | Accepted (design) |
-| [D-60](#d-60-ship-the-ui-in-two-increments) | Ship the UI in two increments | Product | Accepted (design) |
+| [D-60](#d-60-ship-the-ui-in-two-increments) | Ship the UI in two increments | Product | Accepted (v1a shipped) |
 | [D-61](#d-61-long-running-studies-run-from-a-pinned-git-worktree) | Long-running studies run from a pinned git worktree | Experiments | Accepted |
 | [D-62](#d-62-train-time-augmentation-is-a-consistent-but-modest-gain) | Train-time augmentation is a consistent but modest gain | Experiments | Accepted |
 
@@ -667,7 +667,7 @@ The API exposes these on `/metrics` (Prometheus): `ecg_prediction_latency_second
 The design review that shaped these decisions checked the first proposal against the real architecture. Each entry notes what changed and why.
 
 ### D-53: Primary users are medical students and residents learning ECG interpretation
-- **Status**: Accepted (design, 2026-10-12). Not yet built.
+- **Status**: Accepted (2026-10-12). v1a built 2026-10-13.
 - **Context**: The model gives calibrated probabilities for five broad categories plus attributions, validated on unseen patients. It can't distinguish acute from old MI, wasn't trained on single-lead wearables, and isn't a medical device (D-02).
 - **Decision**: An educational tool: "practise reading real ECGs with an AI second opinion". The student reads first, then compares with the cardiologist label and the model, and can question the model.
 - **Why**: ECG reading is learned through many real cases with feedback, and that's exactly the data (PTB-XL labels) and capability (calibrated, explainable predictions) the project has. It carries no clinical liability, and the model's limitations become teaching material instead of risks.
@@ -678,7 +678,7 @@ The design review that shaped these decisions checked the first proposal against
 - **Consequence**: The clinical action table (D-02) is **not shown** in the UI. It stays API-only until it's reworded.
 
 ### D-54: A fixed, test-fold-only case bank with precomputed model artifacts
-- **Status**: Accepted (design, 2026-10-12). **Revised** from "the tutor re-runs the model live".
+- **Status**: Accepted (2026-10-12). **Revised** from "the tutor re-runs the model live". Built 2026-10-13.
 - **Decision**:
   - About 300 cases, drawn **only from test fold 10**, balanced across classes and deliberately including cases the model gets wrong.
   - A build step (`build_case_bank`) precomputes, for each case: the display signal (250 Hz), predictions, per-class explanations, lead-occlusion and 1 s time-window occlusion deltas for each class, model embeddings and nearest neighbours *within the bank*, and the PTB-XL label likelihoods.
@@ -688,9 +688,14 @@ The design review that shaped these decisions checked the first proposal against
   - A live 12-lead occlusion sweep costs about 3 s of CPU on a 0.5 vCPU pod and would compete with `/predict`. Precomputed lookups take milliseconds, are deterministic, and are testable.
   - Test-fold-only means the model is never shown a case it trained on, so every "the model got it right" is honest (the D-05 lesson applied to the product).
 - **Trade-offs**: No live "what if" beyond the precomputed occlusions (leads and 1 s windows) in v1. The bank adds about 15–25 MB to the image.
+- **As built (v1a)**:
+  - **281 cases**: 60 each for NORM, MI, STTC and CD, and **41 for HYP**. Only that many test records have HYP as their *primary* (highest-likelihood) label once the error quota is met, because hypertrophy usually co-occurs at lower likelihood.
+  - 15 model errors per class. 20 MB through Git LFS.
+  - Occlusions, embeddings and neighbours are deferred to v1b, which is when the tutor needs them.
+  - A CI guard test fails if the committed bank doesn't match the committed model.
 
 ### D-55: Frontend: Preact + htm + uPlot, vendored, no build step, served by FastAPI
-- **Status**: Accepted (design, 2026-10-12). **Revised** from "plain static page".
+- **Status**: Accepted (2026-10-12). **Revised** from "plain static page". Built 2026-10-13: htm 3.1.1 standalone (13 KB) and uPlot 1.6.31, with a SHA-256 manifest and a test that fails if a vendored file changes.
 - **Decision**:
   - One page at `/app`, served by the existing FastAPI container.
   - Preact + htm (components without JSX or a bundler) and uPlot (fast canvas time series) are vendored as version-pinned files.
@@ -746,7 +751,7 @@ The design review that shaped these decisions checked the first proposal against
 - **Why**: Real LLM calls in CI cost money, need a secret, and are non-deterministic. Tracing production turns to MLflow would make serving depend on MLflow at runtime, which D-18 deliberately avoids.
 
 ### D-60: Ship the UI in two increments
-- **Status**: Accepted (design, 2026-10-12)
+- **Status**: Accepted (2026-10-12). **v1a shipped 2026-10-13**; v1b (the tutor) is next.
 - **Decision**:
   - **v1a**: the case bank, case viewer, reveal, and model card, with no LLM.
   - **v1b**: the tutor (D-56–D-59) on top.
@@ -785,3 +790,4 @@ The design review that shaped these decisions checked the first proposal against
 | 2026-10-12 | Seed-variance study: 0.9114 ± 0.0018. Promotion margin raised to 0.004. 3-seed ensemble 0.9177. D-47 completed; D-49, D-50, D-51 |
 | 2026-10-12 | Evaluation metrics reference added (definitions, computation, caveats, test-fold prevalence and subgroup sizes); D-52. Product & UI design accepted after an architecture review: D-53–D-60 |
 | 2026-10-13 | Augmentation study: +0.0033 single-model (all seeds), augmented 3-seed ensemble 0.9199. D-62; study-worktree lesson D-61 |
+| 2026-10-13 | Learner UI v1a shipped: 281-case bank, case API, model card, 12-lead viewer, read/reveal/attention loop. D-53, D-54, D-55, D-60 updated |
