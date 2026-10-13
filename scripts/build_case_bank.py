@@ -45,8 +45,13 @@ def main() -> None:
         device=a.device,
     )
     sel = m["selection"]
-    print(f"Built {sel['per_class']} x {len(m['classes'])} cases for {m['model_version']} "
-          f"({sel['model_errors_in_bank']} model errors) -> {a.out}")
+    counts = ", ".join(f"{c} {n}" for c, n in sel["per_class"].items())
+    print(f"Built {m['n_cases']} cases for {m['model_version']} ({counts}; "
+          f"{sel['model_errors_in_bank']} model errors) -> {a.out}")
+    short = {c: n for c, n in sel["per_class"].items() if n < sel["per_class_requested"]}
+    if short:
+        print(f"Note: fewer than {sel['per_class_requested']} test records were available for "
+              f"{short}")
 
 
 if __name__ == "__main__":

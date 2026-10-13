@@ -91,6 +91,7 @@ def build_case_bank(
     seed: int = 0,
     device: str | None = None,
 ) -> dict:
+    lineage = lineage_tags()  # Captured once, at start (same rule as training, D-14)
     predictor = ClinicalActionPredictor(model_path=model_path, device=device)
     model, dev = predictor.model.eval(), predictor.device
     thresholds = np.array([predictor.thresholds[c] for c in SUPERCLASSES])
@@ -167,7 +168,6 @@ def build_case_bank(
             },
         })
 
-    lineage = lineage_tags()
     manifest = {
         "model_version": predictor.model_version,
         "thresholds": predictor.thresholds,
@@ -176,12 +176,19 @@ def build_case_bank(
         "display_fs": DISPLAY_FS,
         "heatmap_fs": HEATMAP_RATE,
         "source": "PTB-XL 1.0.3, strat_fold 10 (test) only",
-        "selection": {"per_class": per_class, "error_share": error_share, "seed": seed,
-                      "test_fold_size": len(test),
-                      "model_errors_in_bank": int((~correct[picked]).sum())},
+        "selection": {
+            "per_class_requested": per_class, "error_share": error_share, "seed": seed,
+            "test_fold_size": len(test),
+            # Actual counts: a class can fall short (few test records have HYP as primary label)
+            "per_class": {c: int((primary[picked] == c).sum()) for c in SUPERCLASSES},
+            "model_errors_per_class": {
+                c: int(((primary[picked] == c) & ~correct[picked]).sum()) for c in SUPERCLASSES
+            },
+            "model_errors_in_bank": int((~correct[picked]).sum()),
+        },
         "built_at": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
         "git_commit": lineage["git_commit"],
         "data_dvc_md5": lineage["data_dvc_md5"],
     }
     write_bank(out_dir, manifest, cases, display, lead_imp, temporal, heatmap)
-    return manifest
+    return {**manifest, "n_cases": len(cases)}  # Same as the manifest written to disk
