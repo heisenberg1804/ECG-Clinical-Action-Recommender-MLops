@@ -60,6 +60,7 @@ class TrainConfig:
     dropout: float = 0.3
     patience: int = 5
     loss: str = "bce"  # "bce" or "focal"
+    augment: bool = False  # Train-time augmentation (training split only)
     focal_gamma: float = 2.0
     num_workers: int = 4
     seed: int = 42
@@ -176,7 +177,8 @@ def train(cfg: TrainConfig) -> dict:
         splits = {k: v.sample(min(cfg.limit, len(v)), random_state=cfg.seed)
                   for k, v in splits.items()}
     cache_dir = build_signal_cache(df, data_dir, Path(cfg.cache_dir))
-    datasets = {k: PTBXLDataset(v, cache_dir) for k, v in splits.items()}
+    datasets = {k: PTBXLDataset(v, cache_dir, augment=cfg.augment and k == "train")
+                for k, v in splits.items()}
     loader_kw = dict(batch_size=cfg.batch_size, num_workers=cfg.num_workers,
                      persistent_workers=cfg.num_workers > 0)
     loaders = {k: DataLoader(ds, shuffle=(k == "train"), **loader_kw) for k, ds in datasets.items()}

@@ -95,3 +95,31 @@ def test_evaluate_and_flat_metrics_names():
                 "test_specificity_A", "test_ece_A", "test_auc_sex_male", "test_auc_sex_female",
                 "test_auc_age_lt40", "test_auc_age_40to65", "test_auc_age_gt65"}
     assert expected <= set(flat)
+
+
+class TestAugmentation:
+    def test_preserves_contract_and_changes_signal(self):
+        from src.ml.training.data import augment_ecg
+        x = np.random.default_rng(0).normal(size=(12, 5000)).astype(np.float32)
+        rng = np.random.default_rng(1)
+        outs = [augment_ecg(x, rng) for _ in range(20)]
+        assert all(o.shape == x.shape and o.dtype == np.float32 for o in outs)
+        assert all(np.isfinite(o).all() for o in outs)
+        assert any(not np.allclose(o, x) for o in outs)
+        np.testing.assert_array_equal(x, np.random.default_rng(0).normal(size=(12, 5000))
+                                      .astype(np.float32))  # Input never mutated
+
+    def test_time_shift_pads_with_edges_not_wraparound(self):
+        from src.ml.training.data import augment_ecg
+
+        class OnlyShift:  # rng stub: skip noise/wander/dropout, force a +100 sample shift
+            def __init__(self):
+                self.calls = iter([0.9, 0.9, 0.1, 0.9])
+            def random(self):
+                return next(self.calls)
+            def integers(self, lo, hi=None):
+                return 100
+        x = np.tile(np.arange(5000, dtype=np.float32), (12, 1))
+        out = augment_ecg(x, OnlyShift())
+        assert (out[:, :100] == 0).all()  # Edge value of the start, not the end
+        np.testing.assert_array_equal(out[:, 100:], x[:, :-100])
