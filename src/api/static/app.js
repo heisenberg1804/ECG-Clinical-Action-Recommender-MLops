@@ -201,6 +201,51 @@ function ResultPanel({ result, thresholds, focus, setFocus }) {
     </section>`;
 }
 
+const pct = (x) => (x * 100).toFixed(1);
+const GROUPS = [["sex_male", "Male"], ["sex_female", "Female"], ["age_lt40", "Age < 40"],
+                ["age_40to65", "Age 40–65"], ["age_gt65", "Age > 65"]];
+
+function ModelCard({ card }) {
+  const e = card.evaluation;
+  const short = (v) => (v ? String(v).slice(0, 12) : "n/a");
+  return html`
+    <details class="panel card">
+      <summary><h2>About the model</h2>
+        <span class="muted">${card.model_version} · test macro AUC ${e.test_macro_auc.toFixed(3)}</span></summary>
+      <p class="muted small">${card.architecture}. Evaluated on ${e.split}.</p>
+      <div class="cols">
+        <div>
+          <h3>Per class (test fold)</h3>
+          <table class="metrics">
+            <thead><tr><th></th><th>AUC</th><th>Sensitivity</th><th>Specificity</th><th>Threshold</th><th>ECE</th></tr></thead>
+            <tbody>${CLASSES.map(([c, name]) => html`
+              <tr><th title=${name}>${c}</th>
+                <td>${e.test_per_class_auc[c].toFixed(3)}</td>
+                <td>${pct(e.test_at_threshold[c].sensitivity)}%</td>
+                <td>${pct(e.test_at_threshold[c].specificity)}%</td>
+                <td>${card.thresholds[c].toFixed(2)}</td>
+                <td>${e.test_ece[c].toFixed(3)}</td></tr>`)}</tbody>
+          </table>
+          <p class="muted small">AUC ranks positives above negatives (1.0 is perfect). Sensitivity and
+            specificity are at the shown thresholds. ECE is calibration error: lower means the
+            percentages mean what they say.</p>
+        </div>
+        <div>
+          <h3>By patient group (macro AUC)</h3>
+          <table class="metrics">
+            <tbody>${GROUPS.filter(([k]) => k in e.test_subgroup_auc).map(([k, label]) => html`
+              <tr><th>${label}</th><td>${e.test_subgroup_auc[k].toFixed(3)}</td></tr>`)}</tbody>
+          </table>
+          <h3>Limitations</h3>
+          <ul class="small">${card.limitations.map((l) => html`<li>${l}</li>`)}</ul>
+          <h3>Lineage</h3>
+          <p class="small mono">${`git ${short(card.lineage.git_commit)} · data ${short(card.lineage.data_dvc_md5)} · MLflow run ${short(card.lineage.mlflow_run_id)}`}</p>
+          ${card.case_bank && html`<p class="muted small">${`${card.case_bank.n_cases} practice cases from ${card.case_bank.source}, built ${card.case_bank.built_at.slice(0, 10)}.`}</p>`}
+        </div>
+      </div>
+    </details>`;
+}
+
 function App() {
   const [cases, setCases] = useState(null);
   const [idx, setIdx] = useState(store.get("ecg.caseIndex", 0));
@@ -267,6 +312,7 @@ function App() {
       ${ecg && !result && html`<${ReadPanel} answer=${answer} setAnswer=${setAnswer} onReveal=${reveal} busy=${busy} />`}
       ${result && card && html`<${ResultPanel} result=${result} thresholds=${card.thresholds}
         focus=${focus} setFocus=${setFocus} />`}
+      ${card && html`<${ModelCard} card=${card} />`}
     <//>`;
 }
 
