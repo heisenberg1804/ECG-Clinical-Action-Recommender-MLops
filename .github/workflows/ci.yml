@@ -14,9 +14,9 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
         with:
           python-version: '3.11'
 
@@ -27,21 +27,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4  # Tests load the real models/best_model.pth (LFS, below)
+        uses: actions/checkout@v7  # Tests load the real models/best_model.pth (LFS, below)
 
       # Git LFS bandwidth is metered: restore LFS objects from the Actions cache,
       # keyed on the exact set of LFS files, and download only on a cache miss
       - name: List LFS objects
         run: git lfs ls-files --long | cut -d' ' -f1 | sort > .lfs-objects
       - name: Cache LFS objects
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .git/lfs
           key: lfs-${{ hashFiles('.lfs-objects') }}
       - name: Materialize LFS files
         run: git lfs pull
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
         with:
           python-version: '3.11'
           enable-cache: true
@@ -55,7 +55,7 @@ jobs:
   k8s-manifests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Render kustomize base and prod overlay
         run: |
@@ -76,9 +76,9 @@ jobs:
   terraform:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: 1.16.5
 
@@ -100,7 +100,7 @@ jobs:
       matrix:
         image: [api, mlflow]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Git LFS bandwidth is metered: restore LFS objects from the Actions cache,
       # keyed on the exact set of LFS files, and download only on a cache miss
@@ -109,7 +109,7 @@ jobs:
         run: git lfs ls-files --long | cut -d' ' -f1 | sort > .lfs-objects
       - name: Cache LFS objects
         if: matrix.image == 'api'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .git/lfs
           key: lfs-${{ hashFiles('.lfs-objects') }}
@@ -117,11 +117,11 @@ jobs:
         if: matrix.image == 'api'
         run: git lfs pull
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # Build only (no push) so a broken Dockerfile fails here, not during deploy
       - name: Build ${{ matrix.image }} image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./docker/Dockerfile.${{ matrix.image }}
