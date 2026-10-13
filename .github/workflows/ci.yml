@@ -27,9 +27,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4  # Tests load the real models/best_model.pth (LFS, below)
+
+      # Git LFS bandwidth is metered: restore LFS objects from the Actions cache,
+      # keyed on the exact set of LFS files, and download only on a cache miss
+      - name: List LFS objects
+        run: git lfs ls-files --long | cut -d' ' -f1 | sort > .lfs-objects
+      - name: Cache LFS objects
+        uses: actions/cache@v4
         with:
-          lfs: true  # Tests load the real models/best_model.pth
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.lfs-objects') }}
+      - name: Materialize LFS files
+        run: git lfs pull
 
       - uses: astral-sh/setup-uv@v6
         with:
@@ -91,8 +101,21 @@ jobs:
         image: [api, mlflow]
     steps:
       - uses: actions/checkout@v4
+
+      # Git LFS bandwidth is metered: restore LFS objects from the Actions cache,
+      # keyed on the exact set of LFS files, and download only on a cache miss
+      - name: List LFS objects
+        if: matrix.image == 'api'  # Only the API image contains the model
+        run: git lfs ls-files --long | cut -d' ' -f1 | sort > .lfs-objects
+      - name: Cache LFS objects
+        if: matrix.image == 'api'
+        uses: actions/cache@v4
         with:
-          lfs: true
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.lfs-objects') }}
+      - name: Materialize LFS files
+        if: matrix.image == 'api'
+        run: git lfs pull
 
       - uses: docker/setup-buildx-action@v3
 
