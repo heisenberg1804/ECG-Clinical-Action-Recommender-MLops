@@ -74,6 +74,9 @@ earlier decision, set the old one's status to `Superseded by D-xx`.
 | [D-46](#d-46-feature-branches-prs-and-merge-commits) | Feature branches, PRs, and merge commits | Workflow | Accepted |
 | [D-47](#d-47-measure-seed-variance-before-claiming-improvements) | Measure seed variance before claiming improvements | Experiments | Accepted |
 | [D-48](#d-48-abandon-cloud-sql-users-and-databases-on-destroy) | Abandon Cloud SQL users and databases on destroy | Infrastructure | Accepted |
+| [D-49](#d-49-promotion-requires-beating-the-champion-by-more-than-seed-noise) | Promotion requires beating the champion by more than seed noise | Registry | Accepted |
+| [D-50](#d-50-ensembles-are-evaluated-with-the-shared-evaluation-and-logged-as-runs) | Ensembles are evaluated with the shared evaluation and logged as runs | Experiments | Accepted |
+| [D-51](#d-51-defer-serving-the-ensemble-until-the-experiment-program-finishes) | Defer serving the ensemble until the experiment program finishes | Serving | Proposed |
 
 ---
 
@@ -502,11 +505,56 @@ earlier decision, set the old one's status to `Superseded by D-xx`.
 ## Experiments
 
 ### D-47: Measure seed variance before claiming improvements
-- **Status**: Accepted (2026-10-12). In progress.
-- **Context**: Only one model has been trained on the leak-free split. Without knowing run-to-run noise, no experiment can claim an improvement.
-- **Decision**: Retrain the baseline with seeds 43 and 44, which together with the champion's seed 42 gives three runs. Report macro AUC as mean ± std. Group runs with `--tag study=<name>`. Then run targeted experiments: augmentation (overfitting), class-balanced or focal loss (HYP), ResNet-34 (capacity), and a multi-seed ensemble. The release gates (D-16) decide promotion.
-- **Why**: Improvements smaller than seed noise aren't improvements. Most portfolios skip this step.
-- **Where**: `scripts/train.py --tag`, MLflow experiment `ecg-ptbxl`
+- **Status**: Accepted (2026-10-12). Study completed.
+- **Context**: Only one model had been trained on the leak-free split. Without knowing run-to-run noise, no experiment can claim an improvement.
+- **Decision**: Retrain the baseline with seeds 43 and 44, which with the champion's seed 42 gives three runs. Report macro AUC as mean ± std, and group runs with `--tag study=<name>`.
+- **Result (test fold 10)**:
+
+  | | Seed 42 | Seed 43 | Seed 44 | Mean ± std |
+  |---|---|---|---|---|
+  | Macro AUC | 0.9098 | 0.9110 | 0.9133 | **0.9114 ± 0.0018** |
+  | HYP AUC | 0.828 | 0.833 | 0.831 | 0.831 ± 0.003 |
+  | Male / female AUC | 0.919 / 0.899 | 0.921 / 0.900 | 0.925 / 0.901 | 0.922 / 0.900 |
+  | Best epoch | 13 | 14 | 10 | 12.3 ± 2.1 |
+
+- **Findings**:
+  - Run-to-run noise is small (std 0.0018).
+  - HYP's weakness and the ~0.022 male/female gap are **systematic**: they reproduce on every seed, so they're properties of the data or model, not luck.
+  - Every run peaks at epochs 10–14 and then overfits.
+  - ECE varies more than AUC across seeds (max per class 0.039–0.056), so the README's "ECE ≤ 0.04" holds for the champion only.
+- **Why**: Improvements smaller than seed noise aren't improvements. This measurement directly set D-49's gate.
+- **Where**: `scripts/train.py --tag`; MLflow experiment `ecg-ptbxl`, `tags.study = 'seed-variance'`
+
+### D-49: Promotion requires beating the champion by more than seed noise
+- **Status**: Accepted (2026-10-12). Amends D-16.
+- **Decision**: `promote_model.py --min-delta` defaults to **0.004**, about 2× the seed-to-seed std of test macro AUC (D-47).
+- **Why**: With a zero margin, simply retraining the champion's recipe with a luckier seed (e.g. seed 44, +0.0035) would have been promoted. That's churn, not progress.
+- **Trade-offs**: Genuine but small gains (< 0.004) are rejected. That's acceptable, because they can't be distinguished from noise with three seeds anyway.
+- **Where**: `scripts/promote_model.py`
+
+### D-50: Ensembles are evaluated with the shared evaluation and logged as runs
+- **Status**: Accepted (2026-10-12)
+- **Decision**: `metrics.evaluate()` is the single evaluation used by training, ensembles and future experiments, and its metric names are pinned by a test. `evaluate_ensemble.py` averages member probabilities, tunes thresholds on validation, and logs a normal MLflow run (`study=ensemble`, member IDs as params).
+- **Result**: Evaluating the 3-seed ensemble reproduced each member's training-time AUC exactly.
+
+  | | Champion | 3-seed ensemble |
+  |---|---|---|
+  | Macro AUC | 0.9098 | **0.9177** (+0.0079, about 4× seed noise) |
+  | Per class (NORM / MI / STTC / CD / HYP) | 0.943 / 0.930 / 0.931 / 0.917 / 0.828 | 0.947 / 0.935 / 0.936 / 0.928 / 0.842 |
+  | Subgroup gap | 0.024 | 0.024 |
+  | Max ECE | 0.039 | 0.038 |
+
+- **Why**: An ensemble is only comparable to a single model if both are scored by identical code on identical data.
+- **Where**: `src/ml/training/metrics.py`, `scripts/evaluate_ensemble.py`
+
+### D-51: Defer serving the ensemble until the experiment program finishes
+- **Status**: Proposed (2026-10-12)
+- **Context**: The ensemble passes the gates, but serving it means about 3× inference CPU (~0.8 s vs ~0.27 s), three sets of weights in the image, and averaging explanations across members.
+- **Decision**: Don't change serving yet. Run the remaining experiments (augmentation, then loss and architecture), each with 3 seeds, so their ensembles come for free. Then make **one** serving change for the best final configuration.
+- **Why**: Serving changes are the expensive part (code, image, latency, explanations). Changing serving once, for the final winner, beats shipping an intermediate ensemble that the next experiment might obsolete.
+- **Trade-offs**: The demo keeps serving the single champion (0.910) for now.
+
+---
 
 ---
 
@@ -514,8 +562,8 @@ earlier decision, set the old one's status to `Superseded by D-xx`.
 
 | Limitation | Impact | Planned response |
 |---|---|---|
-| HYP is weak (AUC 0.83, F1 0.46) | Lowest-confidence class | Experiments (D-47) |
-| About 2 AUC points lower for women and patients over 40 | Fairness gap within the gate, but real | Track per experiment; consider reweighting |
+| HYP is weak (AUC 0.83, F1 0.46; reproduces on every seed, D-47) | Lowest-confidence class | Augmentation, loss and architecture experiments; ensemble reaches 0.842 (D-50) |
+| About 2 AUC points lower for women and patients over 40 (systematic across seeds) | Fairness gap within the gate, but real | Per-class, per-sex analysis (e.g. sex-specific HYP voltage criteria); track per experiment |
 | The action table reads as orders | Clinically inappropriate framing | Reword as decision support (D-02) |
 | Drift monitoring ignores the signal itself | Can't detect device or population shift | Signal-level drift features (D-23) |
 | Live bias check uses demographic parity | Flags real prevalence differences | Label-based checks (D-12, D-23) |
@@ -536,3 +584,4 @@ earlier decision, set the old one's status to `Superseded by D-xx`.
 | 2026-10-12 | PR #5: fresh-project fixes, MLflow seeding, DVC on the new bucket. D-34, D-36, D-37 |
 | 2026-10-12 | First live GKE deploy verified end to end. Seed-variance study started. D-47 |
 | 2026-10-12 | First real teardown failed halfway on a Cloud SQL user, leaving the instance billing; `make` skipped the audit. Fixed: D-48, D-35 amended |
+| 2026-10-12 | Seed-variance study: 0.9114 ± 0.0018. Promotion margin raised to 0.004. 3-seed ensemble 0.9177. D-47 completed; D-49, D-50, D-51 |
