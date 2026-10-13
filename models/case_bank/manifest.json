@@ -1,0 +1,60 @@
+{
+  "model_version": "resnet18-0787a909f202",
+  "thresholds": {
+    "NORM": 0.42,
+    "MI": 0.32,
+    "STTC": 0.34,
+    "CD": 0.36,
+    "HYP": 0.21
+  },
+  "classes": [
+    "NORM",
+    "MI",
+    "STTC",
+    "CD",
+    "HYP"
+  ],
+  "lead_names": [
+    "I",
+    "II",
+    "III",
+    "aVR",
+    "aVL",
+    "aVF",
+    "V1",
+    "V2",
+    "V3",
+    "V4",
+    "V5",
+    "V6"
+  ],
+  "display_fs": 250,
+  "heatmap_fs": 50,
+  "source": "PTB-XL 1.0.3, strat_fold 10 (test) only",
+  "selection": {
+    "per_class_requested": 60,
+    "error_share": 0.25,
+    "seed": 0,
+    "test_fold_size": 2158,
+    "per_class": {
+      "NORM": 60,
+      "MI": 60,
+      "STTC": 60,
+      "CD": 60,
+      "HYP": 41
+    },
+    "model_errors_per_class": {
+      "NORM": 15,
+      "MI": 15,
+      "STTC": 15,
+      "CD": 15,
+      "HYP": 15
+    },
+    "model_errors_in_bank": 75
+  },
+  "built_at": "2026-10-13T05:02:54+00:00",
+  "git_commit": "635339cc74510e4c5397bbebde8c200708905615",
+  "data_dvc_md5": "f1b12adf4e7af873db6494bd861d948e.dir",
+  "schema_version": 1,
+  "n_cases": 281
+}
