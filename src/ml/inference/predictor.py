@@ -74,6 +74,7 @@ class ClinicalActionPredictor:
         self.superclasses = ['NORM', 'MI', 'STTC', 'CD', 'HYP']
         self.model_version = os.getenv("MODEL_VERSION", "")
         self.weights_digest = ""
+        self.meta: dict = {}  # model_meta.json, when it matches the loaded weights
         self.model = self._load_model()
 
         # Load action mapping
@@ -139,6 +140,7 @@ class ClinicalActionPredictor:
             meta = json.loads(meta_path.read_text())
             if meta.get("model_version") == f"resnet18-{self.weights_digest}":
                 print(f"✅ Using tuned thresholds from {meta_path.name}")
+                self.meta = meta
                 return {c: float(meta["thresholds"][c]) for c in self.superclasses}
             print(f"⚠️  {meta_path.name} does not match the loaded weights; ignoring it")
         return dict.fromkeys(self.superclasses, DEFAULT_THRESHOLD)
