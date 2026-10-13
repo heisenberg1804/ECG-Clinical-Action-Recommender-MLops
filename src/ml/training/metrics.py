@@ -88,3 +88,39 @@ def subgroup_auc(
         for name, mask in groups.items()
         if mask.sum() > 0
     }
+
+
+def evaluate(
+    val_true: np.ndarray,
+    val_prob: np.ndarray,
+    test_true: np.ndarray,
+    test_prob: np.ndarray,
+    test_meta: pd.DataFrame,
+    classes: list[str],
+) -> dict:
+    """
+    Full evaluation used by every training run and every ensemble/experiment.
+
+    Thresholds are tuned on validation only, then everything is measured on test.
+    """
+    thresholds = tune_thresholds(val_true, val_prob, classes)
+    return {
+        "thresholds": thresholds,
+        "test_macro_auc": macro_auc(test_true, test_prob, classes),
+        "test_per_class_auc": per_class_auc(test_true, test_prob, classes),
+        "test_at_threshold": threshold_metrics(test_true, test_prob, classes, thresholds),
+        "test_ece": {c: expected_calibration_error(test_true[:, i], test_prob[:, i])
+                     for i, c in enumerate(classes)},
+        "test_subgroup_auc": subgroup_auc(test_true, test_prob, test_meta, classes),
+    }
+
+
+def flat_metrics(ev: dict) -> dict[str, float]:
+    """Flatten an evaluate() result into MLflow metric names (stable across runs)."""
+    out = {"test_macro_auc": ev["test_macro_auc"]}
+    out.update({f"test_auc_{c}": v for c, v in ev["test_per_class_auc"].items()})
+    out.update({f"test_{k}_{c}": v for c, d in ev["test_at_threshold"].items()
+                for k, v in d.items()})
+    out.update({f"test_ece_{c}": v for c, v in ev["test_ece"].items()})
+    out.update({f"test_auc_{g}": v for g, v in ev["test_subgroup_auc"].items()})
+    return out

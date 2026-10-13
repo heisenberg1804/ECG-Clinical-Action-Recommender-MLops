@@ -229,22 +229,11 @@ def train(cfg: TrainConfig) -> dict:
 
         # ---------------- Evaluate: thresholds from val, metrics on test ----------------
         _, val_prob, val_true = run_epoch(model, loaders["val"], criterion, device)
-        thresholds = m.tune_thresholds(val_true, val_prob, SUPERCLASSES)
         _, test_prob, test_true = run_epoch(model, loaders["test"], criterion, device)
-
-        class_auc = m.per_class_auc(test_true, test_prob, SUPERCLASSES)
-        at_threshold = m.threshold_metrics(test_true, test_prob, SUPERCLASSES, thresholds)
-        ece = {c: m.expected_calibration_error(test_true[:, i], test_prob[:, i])
-               for i, c in enumerate(SUPERCLASSES)}
-        subgroups = m.subgroup_auc(test_true, test_prob, splits["test"], SUPERCLASSES)
-        test_auc = m.macro_auc(test_true, test_prob, SUPERCLASSES)
-
-        mlflow.log_metric("test_macro_auc", test_auc)
-        mlflow.log_metrics({f"test_auc_{c}": v for c, v in class_auc.items()})
-        mlflow.log_metrics({f"test_{k}_{c}": v for c, d in at_threshold.items()
-                            for k, v in d.items()})
-        mlflow.log_metrics({f"test_ece_{c}": v for c, v in ece.items()})
-        mlflow.log_metrics({f"test_auc_{g}": v for g, v in subgroups.items()})
+        ev = m.evaluate(val_true, val_prob, test_true, test_prob, splits["test"], SUPERCLASSES)
+        mlflow.log_metrics(m.flat_metrics(ev))
+        thresholds = ev["thresholds"]
+        test_auc, class_auc = ev["test_macro_auc"], ev["test_per_class_auc"]
 
         # ---------------- Artifacts ----------------
         out_dir = Path(cfg.output_dir) / run.info.run_id
@@ -260,11 +249,7 @@ def train(cfg: TrainConfig) -> dict:
             "classes": SUPERCLASSES,
             "thresholds": thresholds,
             "split": SPLIT_NAME,
-            "test_macro_auc": test_auc,
-            "test_per_class_auc": class_auc,
-            "test_at_threshold": at_threshold,
-            "test_ece": ece,
-            "test_subgroup_auc": subgroups,
+            **{k: v for k, v in ev.items() if k != "thresholds"},
             **lineage,
         }
         (out_dir / "model_meta.json").write_text(json.dumps(meta, indent=2))

@@ -81,3 +81,17 @@ class TestMetrics:
         groups = m.subgroup_auc(y, p, meta, self.classes)
         assert set(groups) == {"sex_male", "sex_female", "age_lt40", "age_40to65", "age_gt65"}
         assert all(0.5 < v <= 1.0 for v in groups.values())
+
+
+def test_evaluate_and_flat_metrics_names():
+    """Metric names are a contract with every past MLflow run and the promotion gates."""
+    rng = np.random.default_rng(1)
+    classes = ["A", "B"]
+    y = rng.integers(0, 2, size=(60, 2))
+    p = np.clip(y * 0.6 + rng.uniform(0, 0.4, size=y.shape), 0, 1)
+    meta = pd.DataFrame({"sex": [0, 1] * 30, "age": [30, 50, 70] * 20})
+    flat = m.flat_metrics(m.evaluate(y, p, y, p, meta, classes))
+    expected = {"test_macro_auc", "test_auc_A", "test_f1_A", "test_sensitivity_A",
+                "test_specificity_A", "test_ece_A", "test_auc_sex_male", "test_auc_sex_female",
+                "test_auc_age_lt40", "test_auc_age_40to65", "test_auc_age_gt65"}
+    assert expected <= set(flat)
