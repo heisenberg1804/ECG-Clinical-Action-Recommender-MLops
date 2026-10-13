@@ -1,0 +1,88 @@
+/* ECG Reading Practice: light and dark themes share one set of tokens */
+:root {
+  --bg: #f7f5f2;
+  --surface: #ffffff;
+  --ink: #1d1b19;
+  --muted: #6b6560;
+  --line: #e3ddd6;
+  --accent: #b4232a;
+  --paper: #fff7f7;
+  --grid-minor: #f6d6d8;
+  --grid-major: #e9a3a8;
+  --trace: #1d1b19;
+  --radius: 10px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #151413;
+    --surface: #1e1c1b;
+    --ink: #ece8e4;
+    --muted: #a39d97;
+    --line: #34302d;
+    --accent: #ef6b70;
+    --paper: #1b1718;
+    --grid-minor: #3a2a2c;
+    --grid-major: #5e3b3f;
+    --trace: #f2eeea;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.pad { padding: 16px; }
+.muted { color: var(--muted); }
+
+header.top {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  flex-wrap: wrap; padding: 14px 16px; border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+header.top h1 { margin: 0; font-size: 18px; letter-spacing: 0.01em; }
+header.top .tag { font-size: 13px; color: var(--muted); }
+
+main { max-width: 1180px; margin: 0 auto; padding: 16px; }
+
+.casebar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px;
+}
+.casebar .title { font-weight: 600; }
+.casebar .meta { color: var(--muted); }
+.casebar .spacer { flex: 1; }
+button {
+  font: inherit; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--muted); }
+button:disabled { opacity: 0.45; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.sheet {
+  background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 10px; overflow-x: auto;
+}
+/* Keep the clinical layout on small screens: time order across columns matters, so
+   the sheet scrolls horizontally rather than reflowing to fewer columns */
+.sheet > * { min-width: 720px; }
+.grid4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; }
+.lead { position: relative; }
+.lead .name {
+  position: absolute; top: 4px; left: 6px; z-index: 1;
+  font: 600 12px/1 system-ui, sans-serif; color: var(--muted);
+}
+.rhythm { margin-top: 6px; }
+.scale-note { margin-top: 8px; font-size: 12px; color: var(--muted); }
+
+.error {
+  border: 1px solid var(--accent); color: var(--accent); border-radius: var(--radius);
+  padding: 12px 14px; background: var(--surface);
+}
+footer.disclaimer {
+  max-width: 1180px; margin: 8px auto 24px; padding: 0 16px; font-size: 12px; color: var(--muted);
+}

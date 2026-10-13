@@ -2,10 +2,13 @@
 # FILE: src/api/main.py
 # ============================================================
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from src.api.routes import bias, cases, drift, health, model_card, predict
@@ -56,3 +59,11 @@ app.include_router(cases.router, tags=["Learner cases"])
 app.include_router(model_card.router, tags=["Model"])
 app.include_router(drift.router, prefix="/monitoring", tags=["Monitoring"])
 app.include_router(bias.router, prefix="/monitoring", tags=["Monitoring"])
+
+# Learner UI (D-55): static files, no build step. The root redirects to it for demos.
+app.mount("/app", StaticFiles(directory=Path(__file__).parent / "static", html=True), name="app")
+
+
+@app.get("/", include_in_schema=False)
+async def root() -> RedirectResponse:
+    return RedirectResponse(url="/app/")
