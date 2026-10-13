@@ -86,6 +86,8 @@ earlier decision, set the old one's status to `Superseded by D-xx`.
 | [D-58](#d-58-cost-and-abuse-controls-on-the-chat-endpoint) | Cost and abuse controls on the chat endpoint | Security | Accepted (design) |
 | [D-59](#d-59-llm-quality-is-tested-deterministically-in-ci-and-evaluated-on-demand) | LLM quality is tested deterministically in CI and evaluated on demand | Testing | Accepted (design) |
 | [D-60](#d-60-ship-the-ui-in-two-increments) | Ship the UI in two increments | Product | Accepted (design) |
+| [D-61](#d-61-long-running-studies-run-from-a-pinned-git-worktree) | Long-running studies run from a pinned git worktree | Experiments | Accepted |
+| [D-62](#d-62-train-time-augmentation-is-a-consistent-but-modest-gain) | Train-time augmentation is a consistent but modest gain | Experiments | Accepted |
 
 ---
 
@@ -623,6 +625,41 @@ The API exposes these on `/metrics` (Prometheus): `ecg_prediction_latency_second
 - **Why**: Serving changes are the expensive part (code, image, latency, explanations). Changing serving once, for the final winner, beats shipping an intermediate ensemble that the next experiment might obsolete.
 - **Trade-offs**: The demo keeps serving the single champion (0.910) for now.
 
+### D-61: Long-running studies run from a pinned git worktree
+- **Status**: Accepted (2026-10-13). Tooling to follow, before the next study.
+- **Context**: The augmentation study ran from the main working directory. While it ran, development switched branches, so seed 44 started from a different commit (`76a8208`) than seeds 42 and 43 (`62ab6da`). The training code happened to be byte-identical between the two, and every tree was clean, so the results are valid. A different branch could have silently changed the code under a multi-hour study, though.
+- **Decision**: Every study runs from a dedicated `git worktree` checked out at the study's commit, with absolute data and cache paths and the shared MLflow store.
+- **Why**: Lineage tags record *what* ran. A pinned worktree guarantees that it's *what you meant to run*, for the whole study.
+
+### D-62: Train-time augmentation is a consistent but modest gain
+- **Status**: Accepted (2026-10-13)
+- **Context**: Every baseline seed overfit after epochs 10–14 (D-47). D-47's experiment plan listed augmentation first.
+- **Result (seeds 42/43/44, paired with the baseline)**:
+
+  | | Baseline | Augmented | Δ | Per-seed Δ |
+  |---|---|---|---|---|
+  | Macro AUC | 0.9114 ± 0.0018 | **0.9147 ± 0.0026** | +0.0033 | +0.0019 / +0.0046 / +0.0034 |
+  | CD AUC | 0.921 | 0.929 | +0.0085 | all positive |
+  | HYP AUC | 0.831 | 0.836 | +0.0052 | all positive |
+  | Female AUC | 0.900 | 0.905 | +0.0053 | all positive |
+  | Best epoch | 12.3 | 15.7 | +3.3 | overfitting starts later |
+
+  **3-seed ensembles**:
+
+  | | Baseline ensemble | Augmented ensemble |
+  |---|---|---|
+  | Macro AUC | 0.9177 | **0.9199** |
+  | Max ECE | 0.038 | **0.026** |
+  | Female AUC | 0.906 | 0.911 |
+  | Subgroup gap | 0.024 | 0.027 |
+  | HYP F1 | 0.458 | 0.479 |
+
+- **Findings**:
+  - Every seed improved, but the single-model gain (+0.0033) is below the promotion margin (0.004, D-49), so augmentation alone wouldn't be promoted.
+  - The augmented ensemble is the best model so far: +0.0101 over the champion, the best calibration, and closest to the published benchmark (about 0.92–0.93).
+  - Its wider subgroup gap comes largely from the noisy under-40 group (D-52) and stays well inside the gate.
+- **Decision**: Keep `--augment` on for the remaining experiments, and treat the augmented ensemble as the candidate to beat. Serving is still deferred to the end of the program (D-51).
+
 ---
 
 ## Product & UI
@@ -721,7 +758,7 @@ The design review that shaped these decisions checked the first proposal against
 
 | Limitation | Impact | Planned response |
 |---|---|---|
-| HYP is weak (AUC 0.83, F1 0.46; reproduces on every seed, D-47) | Lowest-confidence class | Augmentation, loss and architecture experiments; ensemble reaches 0.842 (D-50) |
+| HYP is weak (AUC 0.83, F1 0.46; reproduces on every seed, D-47) | Lowest-confidence class | Augmentation helps (+0.005, D-62), and the augmented ensemble reaches 0.844; loss and architecture experiments are next |
 | About 2 AUC points lower for women and patients over 40 (systematic across seeds) | Fairness gap within the gate, but real | Per-class, per-sex analysis (e.g. sex-specific HYP voltage criteria); track per experiment |
 | The action table reads as orders | Clinically inappropriate framing | Reword as decision support (D-02) |
 | Drift monitoring ignores the signal itself | Can't detect device or population shift | Signal-level drift features (D-23) |
@@ -747,3 +784,4 @@ The design review that shaped these decisions checked the first proposal against
 | 2026-10-12 | First real teardown failed halfway on a Cloud SQL user, leaving the instance billing; `make` skipped the audit. Fixed: D-48, D-35 amended |
 | 2026-10-12 | Seed-variance study: 0.9114 ± 0.0018. Promotion margin raised to 0.004. 3-seed ensemble 0.9177. D-47 completed; D-49, D-50, D-51 |
 | 2026-10-12 | Evaluation metrics reference added (definitions, computation, caveats, test-fold prevalence and subgroup sizes); D-52. Product & UI design accepted after an architecture review: D-53–D-60 |
+| 2026-10-13 | Augmentation study: +0.0033 single-model (all seeds), augmented 3-seed ensemble 0.9199. D-62; study-worktree lesson D-61 |
