@@ -1,7 +1,7 @@
 # ==========================================
 # Stage 1: The Builder (Heavy Lifting)
 # ==========================================
-FROM python:3.11-slim AS builder
+FROM python:3.14-slim AS builder
 
 # Install build tools needed for compiling libraries
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -24,7 +24,7 @@ RUN uv sync --frozen --no-dev --compile-bytecode
 # ==========================================
 # Stage 2: The Runtime (Slim & Fast)
 # ==========================================
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 WORKDIR /app
 

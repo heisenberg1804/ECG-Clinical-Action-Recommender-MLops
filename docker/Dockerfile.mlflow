@@ -4,7 +4,7 @@
 # Every package that's also in uv.lock is installed at its locked version, so the
 # server runs exactly the MLflow/SQLAlchemy/Alembic the training client uses.
 # (An unconstrained install pulled SQLAlchemy 2.1, which MLflow 3.8 can't import.)
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 COPY --from=ghcr.io/astral-sh/uv:0.9.18 /uv /bin/uv
 COPY pyproject.toml uv.lock /tmp/lock/
