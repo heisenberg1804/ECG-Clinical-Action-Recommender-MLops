@@ -77,6 +77,15 @@ earlier decision, set the old one's status to `Superseded by D-xx`.
 | [D-49](#d-49-promotion-requires-beating-the-champion-by-more-than-seed-noise) | Promotion requires beating the champion by more than seed noise | Registry | Accepted |
 | [D-50](#d-50-ensembles-are-evaluated-with-the-shared-evaluation-and-logged-as-runs) | Ensembles are evaluated with the shared evaluation and logged as runs | Experiments | Accepted |
 | [D-51](#d-51-defer-serving-the-ensemble-until-the-experiment-program-finishes) | Defer serving the ensemble until the experiment program finishes | Serving | Proposed |
+| [D-52](#d-52-subgroup-metrics-need-confidence-intervals) | Subgroup metrics need confidence intervals | Evaluation | Proposed |
+| [D-53](#d-53-primary-users-are-medical-students-and-residents-learning-ecg-interpretation) | Primary users are medical students and residents learning ECG interpretation | Product | Accepted (design) |
+| [D-54](#d-54-a-fixed-test-fold-only-case-bank-with-precomputed-model-artifacts) | A fixed, test-fold-only case bank with precomputed model artifacts | Product | Accepted (design) |
+| [D-55](#d-55-frontend-preact--htm--uplot-vendored-no-build-step-served-by-fastapi) | Frontend: Preact + htm + uPlot, vendored, no build step, served by FastAPI | Frontend | Accepted (design) |
+| [D-56](#d-56-the-tutor-is-a-hosted-llm-with-tool-use-grounded-in-case-bank-lookups) | The tutor is a hosted LLM with tool use, grounded in case-bank lookups | Product | Accepted (design) |
+| [D-57](#d-57-answer-locking-via-signed-session-state-the-server-stays-stateless) | Answer locking via signed session state; the server stays stateless | Backend | Accepted (design) |
+| [D-58](#d-58-cost-and-abuse-controls-on-the-chat-endpoint) | Cost and abuse controls on the chat endpoint | Security | Accepted (design) |
+| [D-59](#d-59-llm-quality-is-tested-deterministically-in-ci-and-evaluated-on-demand) | LLM quality is tested deterministically in CI and evaluated on demand | Testing | Accepted (design) |
+| [D-60](#d-60-ship-the-ui-in-two-increments) | Ship the UI in two increments | Product | Accepted (design) |
 
 ---
 
@@ -193,6 +202,66 @@ earlier decision, set the old one's status to `Superseded by D-xx`.
 - **Decision**: Lead with fold-10 macro AUC **0.910**, with benchmark context (about 0.92–0.93 for the best published 1D CNNs). Explain in the README why earlier numbers were inflated.
 - **Why**: A credible, comparable number beats a big, indefensible one. Finding and fixing your own leakage is itself a demonstration of MLOps judgement.
 - **Where**: `README.md`
+
+### Evaluation metrics reference
+
+This reference describes what every model is measured on, how each metric is computed in this codebase, why it's used, and how *not* to misread it. The same code scores every training run, ensemble and experiment (`metrics.evaluate()`, D-50), so numbers are comparable across MLflow runs.
+
+**Data the metrics are computed on**
+
+| Split | PTB-XL folds | Records | Used for |
+|---|---|---|---|
+| Train | 1–8 | 17,084 | Fitting weights |
+| Validation | 9 | 2,146 | Early stopping, LR schedule, **threshold tuning** |
+| Test | 10 | 2,158 | **Every reported metric** |
+
+The task is multi-label: a record can carry several superclasses (23.5% of test records do; mean 1.29 labels). Test-fold prevalence:
+
+| NORM | MI | STTC | CD | HYP |
+|---|---|---|---|---|
+| 44.6% (963) | 25.5% (550) | 24.1% (521) | 23.0% (496) | **12.1% (262)** |
+
+Subgroup sizes in the test fold: 1,110 male, 1,048 female; 284 under 40, 860 aged 40–65, 1,014 over 65.
+
+**Metrics in use**
+
+| Metric | Question it answers | How it's computed here | Why it's used | Read with care |
+|---|---|---|---|---|
+| **ROC AUC, per class** | How well does the model *rank* positives above negatives for this class, at any threshold? | `sklearn.roc_auc_score` on the sigmoid output, one class at a time. MLflow: `test_auc_<CLASS>` | Threshold-free, so it measures the model rather than a chosen operating point. It's also the standard per-class metric for PTB-XL. | Insensitive to prevalence, so a decent AUC on a rare class (HYP, 12%) can coexist with poor precision. Pair it with F1. |
+| **Macro AUC** (headline) | Overall ranking quality, with every class weighted equally | Unweighted mean of the five per-class AUCs. MLflow: `test_macro_auc` | Equal weighting stops NORM (45% of records) from dominating. It's the PTB-XL benchmark's headline metric, so results are comparable to published work. | One number hides per-class weakness: 0.910 macro includes HYP at 0.83. Always read the per-class row too. |
+| **F1 at tuned threshold**, per class | At the threshold we'd actually use, how well do precision and recall balance? | Threshold per class chosen on **validation** from a grid of 0.05–0.95 (step 0.01) to maximize F1, then F1 measured on test. MLflow: `test_f1_<CLASS>` | AUC alone doesn't tell you how the deployed decision rule behaves. | Depends on prevalence. F1-optimal isn't clinically optimal (a real deployment would set per-class sensitivity targets). |
+| **Sensitivity / specificity**, per class | Of true positives, how many are caught? Of true negatives, how many are correctly cleared? | At the same validation-tuned thresholds, on test. MLflow: `test_sensitivity_<C>`, `test_specificity_<C>` | The language clinicians use, and they show the trade-off F1 hides. | Moves with the threshold; compare only at the stated thresholds. |
+| **Tuned thresholds** | Not a metric: the decision rule that ships | Stored in `model_meta.json` and applied by the API only when its version matches the weights (D-17) | Reported because they define what the other threshold-based metrics mean | Re-tuned for every model; never copy them between models. |
+| **ECE**, per class | When the model says *p*, is it right about *p* of the time? | 10 equal-width probability bins. ECE = Σ (bin share × \|observed frequency − mean predicted probability\|). MLflow: `test_ece_<CLASS>` | The API returns probabilities that people will read as risk, so they must be calibrated, not just well ranked. | Depends on the binning, and it's noisier than AUC across seeds (max per class 0.039–0.056 over 3 seeds, D-47). Read it as "roughly calibrated", not to the third decimal. |
+| **Reliability diagram** | *Where* on the probability scale is the model over- or under-confident? | Observed frequency vs mean prediction per bin, per class. Artifact: `reliability.png` | ECE is one number; the plot shows the shape (e.g. HYP overconfident at 0.7–0.85). | Bins with few samples swing widely. |
+| **Subgroup macro AUC** | Is the model equally *accurate* for each sex and age band? | Macro AUC restricted to each group: male/female (PTB-XL `sex` 0/1), age < 40 / 40–65 / > 65. PTB-XL encodes ages over 89 as 300, so those fall in > 65. MLflow: `test_auc_sex_*`, `test_auc_age_*` | Performance parity against ground truth is the right fairness question for diagnosis, unlike demographic parity (D-12). | **Small groups give noisy numbers.** The under-40 test group has only 7 MI and 10 HYP positives, so its per-class AUCs, and therefore its macro AUC, are unstable (D-52). |
+| **Subgroup gap** | How far apart are the best- and worst-served groups? | max − min over the five subgroup macro AUCs. Release gate: ≤ 0.05 (D-16) | A single, gateable fairness number | Inherits the small-group noise above. The max − min of noisy numbers is biased upward. |
+| **Seed mean ± std** | Is an observed difference larger than retraining noise? | Same recipe, seeds 42/43/44; sample std (ddof = 1). Currently 0.9114 ± 0.0018 | Defines the promotion margin (0.004 ≈ 2 std, D-49) and keeps "improvements" honest | Three seeds give a rough estimate of the std, not a precise one. |
+
+**Considered but not used (yet)**
+
+| Metric | Why not |
+|---|---|
+| Accuracy | Ill-defined for multi-label outputs, and dominated by the majority class in imbalanced data |
+| Micro-averaged AUC | Pools all labels, so NORM's volume dominates and the rare classes we care about most disappear |
+| PR-AUC (average precision) | **Worth adding for HYP** (12% prevalence), where precision matters and ROC AUC is flattering. A candidate for the next metrics change |
+| Brier score | Overlaps with ECE plus AUC; it would be a reasonable, binning-free calibration companion to add alongside PR-AUC |
+
+**Operational metrics (serving, not model quality)**
+
+The API exposes these on `/metrics` (Prometheus): `ecg_prediction_latency_seconds` (histogram), `ecg_predictions_total` by primary diagnosis and urgency, `ecg_prediction_confidence` per class (histogram), and `ecg_model_loaded`. Every prediction is also logged to Postgres with its `model_version` and latency (D-23).
+
+**Standing caveats for every number in this project**
+
+- **Test-fold reuse:** gating many experiments on fold 10 slowly turns it into a selection set. That's acceptable at this scale; the stricter design would hold out a final fold (D-16).
+- **Label noise:** PTB-XL labels carry cardiologist likelihoods (0–100), and some are uncertain, so perfect agreement isn't the ceiling.
+- **One dataset:** there's no external validation yet (another hospital, another device). All numbers describe PTB-XL-like data.
+
+### D-52: Subgroup metrics need confidence intervals
+- **Status**: Proposed (2026-10-12)
+- **Context**: In the test fold, the under-40 group has 7 MI and 10 HYP positives. Per-class AUCs on so few positives are unstable, and the subgroup gap (a max − min) is biased upward by that noise.
+- **Decision**: Report bootstrap 95% confidence intervals for subgroup macro AUCs and the gap (resampling patients within the test fold). Gate on the gap's point estimate as now, but flag gates whose interval crosses the threshold.
+- **Why**: A fairness gate is only as trustworthy as the uncertainty around the number it gates on.
 
 ---
 
@@ -556,6 +625,96 @@ earlier decision, set the old one's status to `Superseded by D-xx`.
 
 ---
 
+## Product & UI
+
+The design review that shaped these decisions checked the first proposal against the real architecture. Each entry notes what changed and why.
+
+### D-53: Primary users are medical students and residents learning ECG interpretation
+- **Status**: Accepted (design, 2026-10-12). Not yet built.
+- **Context**: The model gives calibrated probabilities for five broad categories plus attributions, validated on unseen patients. It can't distinguish acute from old MI, wasn't trained on single-lead wearables, and isn't a medical device (D-02).
+- **Decision**: An educational tool: "practise reading real ECGs with an AI second opinion". The student reads first, then compares with the cardiologist label and the model, and can question the model.
+- **Why**: ECG reading is learned through many real cases with feedback, and that's exactly the data (PTB-XL labels) and capability (calibrated, explainable predictions) the project has. It carries no clinical liability, and the model's limitations become teaching material instead of risks.
+- **Alternatives**:
+  - Clinician triage: unsafe and untruthful given the labels, and it's regulated territory.
+  - Patients with wearables: single-lead input doesn't match the model.
+  - ML practitioners: MLflow already serves them.
+- **Consequence**: The clinical action table (D-02) is **not shown** in the UI. It stays API-only until it's reworded.
+
+### D-54: A fixed, test-fold-only case bank with precomputed model artifacts
+- **Status**: Accepted (design, 2026-10-12). **Revised** from "the tutor re-runs the model live".
+- **Decision**:
+  - About 300 cases, drawn **only from test fold 10**, balanced across classes and deliberately including cases the model gets wrong.
+  - A build step (`build_case_bank`) precomputes, for each case: the display signal (250 Hz), predictions, per-class explanations, lead-occlusion and 1 s time-window occlusion deltas for each class, model embeddings and nearest neighbours *within the bank*, and the PTB-XL label likelihoods.
+  - It also stores calibration bins and the subgroup table.
+  - The bank records the champion's `model_version`, and the app refuses a bank built for different weights (the same rule as D-17). The bank is rebuilt and logged to MLflow on every promotion.
+- **Why**:
+  - A live 12-lead occlusion sweep costs about 3 s of CPU on a 0.5 vCPU pod and would compete with `/predict`. Precomputed lookups take milliseconds, are deterministic, and are testable.
+  - Test-fold-only means the model is never shown a case it trained on, so every "the model got it right" is honest (the D-05 lesson applied to the product).
+- **Trade-offs**: No live "what if" beyond the precomputed occlusions (leads and 1 s windows) in v1. The bank adds about 15–25 MB to the image.
+
+### D-55: Frontend: Preact + htm + uPlot, vendored, no build step, served by FastAPI
+- **Status**: Accepted (design, 2026-10-12). **Revised** from "plain static page".
+- **Decision**:
+  - One page at `/app`, served by the existing FastAPI container.
+  - Preact + htm (components without JSX or a bundler) and uPlot (fast canvas time series) are vendored as version-pinned files.
+  - It includes a 12-lead viewer on ECG-paper grid with attribution heatmaps, a reveal state machine, a model card, and the chat panel.
+- **Why**: Streaming chat plus a viewer plus phase state is beyond comfortable vanilla JS. React + Vite would add a Node toolchain to the Docker build and CI for a component that isn't the project's showcase. No new service, deploy path or infrastructure is needed.
+- **Alternatives**: Streamlit (a second service, a generic look, awkward custom ECG rendering); React + Vite (the standard choice, at the cost of the toolchain).
+
+### D-56: The tutor is a hosted LLM with tool use, grounded in case-bank lookups
+- **Status**: Accepted (design, 2026-10-12)
+- **Decision**:
+  - A hosted LLM API with tool use (Claude). Tools are lookups into the case bank (D-54):
+    - case facts (age, sex, label likelihoods after reveal)
+    - prediction
+    - explanation for a given class
+    - lead or time-window occlusion
+    - similar cases
+    - calibration at a given probability
+    - subgroup performance for the patient's group
+  - v1 modes: Socratic reading, interrogating the model, and comparing similar cases.
+  - The rules: case-specific claims come only from tool results (the UI shows source chips), and general ECG knowledge is labelled as such.
+  - Responses stream to the browser over SSE.
+- **Why**: The differentiator is a tutor that *operates on this case and this model* ("cover lead III — does it still call MI?"), which a general chatbot can't do. Grounding in tools keeps it truthful.
+- **Alternatives**: The local BioMistral via Ollama is free but weaker at reliable tool calling. It's kept as a later offline variant.
+
+### D-57: Answer locking via signed session state; the server stays stateless
+- **Status**: Accepted (design, 2026-10-12). **Revised** from an unspecified "enforced in code".
+- **Decision**:
+  - The session's case and phase (`reading` → `committed` → `revealed`) live in an HMAC-signed token issued by the server.
+  - Tools that would leak the answer (prediction, label, explanations, occlusion) are **refused server-side** until the token says `committed`.
+  - Conversation history is held by the client and sent each turn (LLM APIs are stateless anyway).
+- **Why**: An in-memory session store breaks on pod restart or with two replicas, and a database-backed one couples chat to Cloud SQL. A signed token is stateless, survives restarts, and can't be forged to skip the lock.
+- **Trade-offs**: A client could edit its own history. That's acceptable, because the lock is enforced by tool gating, not by the history.
+
+### D-58: Cost and abuse controls on the chat endpoint
+- **Status**: Accepted (design, 2026-10-12). Amends D-22 for the chat endpoint.
+- **Context**: The API is public and unauthenticated (D-22). An LLM endpoint there would let anyone spend the LLM bill.
+- **Decision**:
+  - The chat requires a **demo passcode** (given to the interviewer).
+  - Per-session turn and output-token caps, plus a per-IP rate limit.
+  - A global daily token budget.
+  - A `CHAT_ENABLED` kill switch.
+  - The API key is in Secret Manager and synced by `deploy_gke.sh`.
+  - A spend limit is set in the LLM provider's console.
+  - The case viewer stays open without a passcode.
+- **Why**: The same principle as the GCP kill switch (D-29): spending must have a hard ceiling that doesn't rely on anyone noticing.
+
+### D-59: LLM quality is tested deterministically in CI and evaluated on demand
+- **Status**: Accepted (design, 2026-10-12). **Revised** from "prompts evaluated in CI" and "MLflow tracing on every turn".
+- **Decision**:
+  - **CI** runs deterministic tests against a *fake* LLM that emits scripted tool calls. They cover answer locking, tool gating, the token caps, and that every case fact in a reply is backed by a tool result. They cost nothing and never flake.
+  - The **LLM eval suite** runs on demand (a `make` target or workflow_dispatch): a fixed set of student questions per case, scored for groundedness, answer leakage before commit, numeric correctness against tool outputs, and Socratic behaviour. Results and traces are logged to MLflow.
+  - **Production** logs turns and tool calls best-effort to Postgres, like predictions.
+- **Why**: Real LLM calls in CI cost money, need a secret, and are non-deterministic. Tracing production turns to MLflow would make serving depend on MLflow at runtime, which D-18 deliberately avoids.
+
+### D-60: Ship the UI in two increments
+- **Status**: Accepted (design, 2026-10-12)
+- **Decision**:
+  - **v1a**: the case bank, case viewer, reveal, and model card, with no LLM.
+  - **v1b**: the tutor (D-56–D-59) on top.
+- **Why**: v1a is useful and demoable on its own at no extra cost, and it builds the case bank that v1b's tools read. Each increment ships through the existing CI/CD with a small, reviewable diff.
+
 ---
 
 ## Known limitations
@@ -570,6 +729,8 @@ earlier decision, set the old one's status to `Superseded by D-xx`.
 | No API auth or rate limiting | Demo-only exposure | Add API key or IAP before persistent use (D-22) |
 | About 2 GB API image | Slower deploys and cold starts | Split serving, training and monitoring dependencies |
 | Local Terraform state | Single operator only | GCS backend when needed (D-33) |
+| Small subgroups (e.g. the under-40 test group has 7 MI and 10 HYP positives) | Noisy subgroup AUCs and fairness gap | Bootstrap confidence intervals (D-52) |
+| No PR-AUC or Brier score | Rare-class precision and calibration are partly hidden | Add to `metrics.evaluate()` (see the metrics reference) |
 
 ---
 
@@ -585,3 +746,4 @@ earlier decision, set the old one's status to `Superseded by D-xx`.
 | 2026-10-12 | First live GKE deploy verified end to end. Seed-variance study started. D-47 |
 | 2026-10-12 | First real teardown failed halfway on a Cloud SQL user, leaving the instance billing; `make` skipped the audit. Fixed: D-48, D-35 amended |
 | 2026-10-12 | Seed-variance study: 0.9114 ± 0.0018. Promotion margin raised to 0.004. 3-seed ensemble 0.9177. D-47 completed; D-49, D-50, D-51 |
+| 2026-10-12 | Evaluation metrics reference added (definitions, computation, caveats, test-fold prevalence and subgroup sizes); D-52. Product & UI design accepted after an architecture review: D-53–D-60 |
