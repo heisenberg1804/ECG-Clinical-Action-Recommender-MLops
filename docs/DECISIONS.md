@@ -73,6 +73,7 @@ earlier decision, set the old one's status to `Superseded by D-xx`.
 | [D-45](#d-45-a-regression-test-for-every-bug-fixed) | A regression test for every bug fixed | Testing | Accepted |
 | [D-46](#d-46-feature-branches-prs-and-merge-commits) | Feature branches, PRs, and merge commits | Workflow | Accepted |
 | [D-47](#d-47-measure-seed-variance-before-claiming-improvements) | Measure seed variance before claiming improvements | Experiments | Accepted |
+| [D-48](#d-48-abandon-cloud-sql-users-and-databases-on-destroy) | Abandon Cloud SQL users and databases on destroy | Infrastructure | Accepted |
 
 ---
 
@@ -383,7 +384,16 @@ earlier decision, set the old one's status to `Superseded by D-xx`.
 - **Status**: Accepted (2026-10-11)
 - **Decision**: `make demo-down` deletes the app namespace on the GKE context *explicitly*, then destroys the platform, then runs `scripts/gcp_inventory.sh`.
 - **Why**: Destroying a cluster can orphan the cloud load balancer created for a `LoadBalancer` Service, about $18/month that nothing would ever clean up. The audit script never prompts, never enables APIs, and never prints "(none)" when a check actually failed.
+- **Amended (2026-10-12)**: The inventory now runs **even when destroy fails**, and the failure is still reported. During the first real teardown, destroy stopped partway and `make` skipped the audit, so Cloud SQL kept billing with no warning. A partial teardown is exactly when the audit matters most.
 - **Where**: `Makefile`, `scripts/gcp_inventory.sh`
+
+### D-48: Abandon Cloud SQL users and databases on destroy
+- **Status**: Accepted (2026-10-12)
+- **Context**: The first real `make demo-down` destroyed the cluster but failed on `google_sql_user.ecg`. Postgres refuses to drop a role that owns objects, and the API creates its tables as `ecg_user` (D-20). Terraform deletes users *before* the instance, so the Cloud SQL instance was left running.
+- **Decision**: `deletion_policy = "ABANDON"` on `google_sql_user` and `google_sql_database`. On destroy, Terraform drops them from state, and deleting the instance removes them for real.
+- **Why**: Deleting users or databases individually before deleting their instance is pointless work that can only fail.
+- **Trade-offs**: None for an instance destroyed as a unit. If users were ever removed independently of the instance, they'd need explicit cleanup.
+- **Where**: `infra/terraform/platform/main.tf`
 
 ### D-36: Seed MLflow on each demo instead of persisting Cloud SQL
 - **Status**: Accepted (2026-10-12)
@@ -525,3 +535,4 @@ earlier decision, set the old one's status to `Superseded by D-xx`.
 | 2026-10-11 | PR #4: k8s rewire, MLflow server, deploy script, minikube-found fixes. D-35, D-38–D-42 |
 | 2026-10-12 | PR #5: fresh-project fixes, MLflow seeding, DVC on the new bucket. D-34, D-36, D-37 |
 | 2026-10-12 | First live GKE deploy verified end to end. Seed-variance study started. D-47 |
+| 2026-10-12 | First real teardown failed halfway on a Cloud SQL user, leaving the instance billing; `make` skipped the audit. Fixed: D-48, D-35 amended |

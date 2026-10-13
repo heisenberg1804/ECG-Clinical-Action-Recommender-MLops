@@ -61,8 +61,12 @@ demo-down:  ## Delete the app (releases its load balancer), destroy the platform
 	@# the namespace delete would miss GKE and orphan a billed load balancer
 	-gcloud container clusters get-credentials ecg-cluster --region us-central1 --project $(PROJECT)
 	-kubectl --context $(GKE_CONTEXT) delete namespace ecg-prod --wait --timeout=5m
-	$(TF)/platform destroy
-	$(MAKE) inventory
+	@# Always run the inventory, even if destroy fails: a partial teardown is exactly
+	@# when something is still billing. Then exit with destroy's status.
+	@# (Calls the script directly: a $$(MAKE) line would execute even under `make -n`)
+	@$(TF)/platform destroy; status=$$?; scripts/gcp_inventory.sh $(PROJECT); \
+	if [ $$status -ne 0 ]; then echo "!! destroy FAILED - resources above may still be billing"; fi; \
+	exit $$status
 
 inventory:  ## List everything in the project that can bill
 	scripts/gcp_inventory.sh $(PROJECT)
