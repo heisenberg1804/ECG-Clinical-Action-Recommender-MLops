@@ -8,7 +8,7 @@ help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
 # ---------------- Development ----------------
-.PHONY: lint test train promote serve mlflow
+.PHONY: lint test train promote case-bank serve mlflow
 lint:  ## Ruff + terraform fmt check
 	uv run ruff check src tests airflow infra
 	terraform fmt -check -recursive infra/terraform
@@ -21,6 +21,9 @@ train:  ## Full training run (logs to MLflow, registers a challenger)
 
 promote:  ## Promote the challenger if it passes the release gates
 	uv run python scripts/promote_model.py
+
+case-bank:  ## Rebuild the UI case bank for the served champion (after every promotion)
+	uv run python scripts/build_case_bank.py
 
 serve:  ## Run the API locally on :8000
 	uv run uvicorn src.api.main:app --reload
