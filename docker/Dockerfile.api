@@ -40,6 +40,8 @@ COPY src/ ./src/
 COPY conftest.py ./
 # Weights + their tuned thresholds/lineage (exported by scripts/promote_model.py)
 COPY models/best_model.pth models/model_meta.json ./models/
+# Learner UI case bank, built for exactly these weights (make case-bank)
+COPY models/case_bank ./models/case_bank
 COPY src/ml/inference/action_mapping.json ./src/ml/inference/action_mapping.json
 
 # Expose port

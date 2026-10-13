@@ -40,6 +40,8 @@ htmlcov/
 *.hdf5
 *.npy
 *.npz
+# ...except the learner UI case bank, versioned through Git LFS (see .gitattributes)
+!models/case_bank/*.npz
 
 # Models
 # models/

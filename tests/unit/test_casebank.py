@@ -90,3 +90,19 @@ class TestStore:
 
     def test_quantize_clips(self):
         assert quantize(np.array([-0.5, 0.0, 0.5, 1.0, 2.0])).tolist() == [0, 0, 128, 255, 255]
+
+
+def test_committed_bank_matches_the_committed_model():
+    """
+    Guard against shipping a stale bank: after a promotion, `make case-bank` must be
+    re-run, or this fails in CI instead of returning 503 in production.
+    """
+    from pathlib import Path
+
+    from src.ml.inference.predictor import ClinicalActionPredictor
+
+    root = Path(__file__).parents[2]
+    served = ClinicalActionPredictor(model_path=root / "models" / "best_model.pth", device="cpu")
+    bank = CaseBank.load(root / "models" / "case_bank", expected_model_version=served.model_version)
+    assert bank.manifest["n_cases"] == len(bank.cases) > 0
+    assert bank.manifest["source"].endswith("strat_fold 10 (test) only")
