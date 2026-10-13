@@ -11,22 +11,16 @@ dependencies = [
     "fastapi>=0.109.0",
     "uvicorn[standard]>=0.27.0",
     "pydantic>=2.5.0",
-    "pydantic-settings>=2.1.0",
-    "sqlalchemy>=2.0.0",
-    "alembic>=1.13.0",
     "asyncpg>=0.29.0",
-    "redis>=5.0.0",
     "numpy>=1.26.0",
     "pandas>=2.1.0",
     "scipy>=1.11.0",
     "wfdb>=4.1.0",
     "torch>=2.1.0",
     "mlflow>=2.9.0",
-    "python-multipart>=0.0.6",
-    "httpx>=0.26.0",
     "tqdm>=4.66.0",
-    "prometheus-client>=0.19.0",              # Add this
-    "prometheus-fastapi-instrumentator>=7.0.0",  # Add this
+    "prometheus-client>=0.19.0",
+    "prometheus-fastapi-instrumentator>=7.0.0",
     "evidently>=0.4.0",
 ]
 
@@ -35,9 +29,8 @@ dev = [
     "pytest>=7.4.0",
     "pytest-cov>=4.1.0",
     "pytest-asyncio>=0.23.0",
+    "httpx>=0.26.0",  # Required by FastAPI TestClient
     "ruff>=0.1.9",
-    "mypy>=1.8.0",
-    "pre-commit>=3.6.0",
 ]
 
 [tool.ruff]
@@ -47,10 +40,6 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
 
-[tool.mypy]
-python_version = "3.11"
-warn_return_any = true
-warn_unused_ignores = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
