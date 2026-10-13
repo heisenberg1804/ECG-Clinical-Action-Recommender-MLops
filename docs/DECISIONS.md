@@ -89,6 +89,7 @@ earlier decision, set the old one's status to `Superseded by D-xx`.
 | [D-61](#d-61-long-running-studies-run-from-a-pinned-git-worktree) | Long-running studies run from a pinned git worktree | Experiments | Accepted |
 | [D-62](#d-62-train-time-augmentation-is-a-consistent-but-modest-gain) | Train-time augmentation is a consistent but modest gain | Experiments | Accepted |
 | [D-63](#d-63-dependency-updates-are-grouped-major-versions-are-planned-migrations) | Dependency updates are grouped; major versions are planned migrations | Reproducibility | Accepted |
+| [D-64](#d-64-declare-only-whats-used-remove-dead-dependencies-and-code) | Declare only what's used; remove dead dependencies and code | Reproducibility | Accepted |
 
 ---
 
@@ -676,6 +677,22 @@ The API exposes these on `/metrics` (Prometheus): `ecg_prediction_latency_second
 - **Trade-offs**: Majors can fall behind unless they're scheduled deliberately. pandas 3, numpy 2 and instrumentator 8 are already on the list.
 - **Where**: `.github/dependabot.yml`
 
+### D-64: Declare only what's used; remove dead dependencies and code
+- **Status**: Accepted (2026-10-13)
+- **Context**: Most Dependabot alerts were in packages the project never runs. Checking every declared dependency against the code found:
+  - `redis`: never imported (a cache that was never built), plus a compose service and env lines.
+  - `mypy` and `pre-commit`: never run, and there's no pre-commit config.
+  - `pydantic-settings`: used only by `src/api/config.py`, which is dead code.
+  - `python-multipart`: there are no form or file endpoints.
+  - `sqlalchemy` and `alembic`: declared, but never imported by our code (MLflow pulls them in itself).
+  - `airflow/requirements.txt`: read by nothing, yet Dependabot kept bumping it.
+- **Decision**:
+  - Remove all of the above, and delete `src/api/config.py` and `airflow/requirements.txt`.
+  - Move `httpx` to the dev dependencies, because FastAPI's `TestClient` needs it and the runtime doesn't.
+- **Result**: the lockfile goes from 167 to 152 packages, with no version changes.
+- **Next (proposed)**: split the remaining dependencies into serving, training and monitoring groups, so the API image stops installing training and monitoring stacks (Evidently brings NLTK, matplotlib brings Pillow).
+- **Why**: Every declared package is attack surface, alert noise and image size. Code nobody imports misleads readers about how configuration actually works (the real configuration is the env-driven `src/db.py`).
+
 ---
 
 ## Product & UI
@@ -808,3 +825,4 @@ The design review that shaped these decisions checked the first proposal against
 | 2026-10-13 | Augmentation study: +0.0033 single-model (all seeds), augmented 3-seed ensemble 0.9199. D-62; study-worktree lesson D-61 |
 | 2026-10-13 | Learner UI v1a shipped: 281-case bank, case API, model card, 12-lead viewer, read/reveal/attention loop. D-53, D-54, D-55, D-60 updated |
 | 2026-10-13 | Dependabot grouped, with automated major bumps turned off after the per-package flood and two failing upgrades. D-63 |
+| 2026-10-13 | Removed 7 unused dependencies, dead config, and a stale requirements file (167 → 152 locked packages). D-64 |
