@@ -54,8 +54,13 @@ seed-mlflow:  ## Copy the local champion run + model into MLflow on GKE (after d
 	until curl -s -o /dev/null localhost:5055/health; do sleep 1; done; \
 	uv run python scripts/seed_mlflow.py --target-uri http://localhost:5055
 
+GKE_CONTEXT = gke_$(PROJECT)_us-central1_ecg-cluster
+
 demo-down:  ## Delete the app (releases its load balancer), destroy the platform, verify
-	-kubectl delete namespace ecg-prod --wait --timeout=5m
+	@# Target the GKE cluster explicitly: with another current context (e.g. minikube)
+	@# the namespace delete would miss GKE and orphan a billed load balancer
+	-gcloud container clusters get-credentials ecg-cluster --region us-central1 --project $(PROJECT)
+	-kubectl --context $(GKE_CONTEXT) delete namespace ecg-prod --wait --timeout=5m
 	$(TF)/platform destroy
 	$(MAKE) inventory
 
