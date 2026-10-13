@@ -4,10 +4,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 An end-to-end MLOps system that classifies 12-lead ECGs into five diagnostic
-superclasses, maps them to suggested follow-up actions, and explains which leads
-and time segments drove each prediction. It's built around reproducibility:
-every served model can be traced to the exact code, data version and evaluation
-that produced it.
+superclasses and explains which leads and time segments drove each prediction,
+served through **ECG Reading Practice**, a learner UI where medical students read
+real ECGs and compare their read with the cardiologist and the model. It's built
+around reproducibility: every served model can be traced to the exact code, data
+version and evaluation that produced it.
 
 > **Not a medical device.** This is a portfolio and research project. The
 > suggested actions come from a hand-written rule table, not clinical guidelines,
@@ -66,6 +67,25 @@ inflated:
 
 The pipeline was rebuilt around the dataset's official patient-wise folds. The
 0.910 above is the number that holds up.
+
+---
+
+## Learner UI: ECG Reading Practice
+
+<img src="docs/learner-ui.png" width="760" alt="A hypertrophy case: the student is right, the model says 99% normal, and the cardiologist's own confidence was 35%">
+
+Medical students practise on **281 real 12-lead ECGs from the PTB-XL test fold**, which the model never saw in training:
+
+1. **Read**: the ECG in the standard 3×4 layout plus a 10 s rhythm strip, on ECG paper (25 mm/s, 10 mm/mV).
+2. **Commit**: select the categories you see.
+3. **Reveal**: the cardiologist's labels with their confidence, the original report, recording-quality notes, and the model's probability for each class against its decision threshold.
+4. **Learn where to look**: pick any class, and the model's attention is shaded on the tracing.
+
+About a quarter of the cases (15 per class) are ones **the model gets wrong**, chosen deliberately, as in the screenshot above. An "About the model" card shows per-class and per-group performance, calibration, lineage and limitations, derived from the served model's metrics.
+
+Run it with `make serve`, then open http://localhost:8000/ (it redirects to `/app/`). After promoting a new model, rebuild the cases with `make case-bank`; CI fails if the committed cases don't match the committed model.
+
+*Next:* a tutor chat that can operate on the case and the model ("cover lead III: does it still say MI?"). See D-53 to D-60 in the [decision record](docs/DECISIONS.md).
 
 ---
 
@@ -168,6 +188,11 @@ DAGs, see the header of `docker/docker-compose.airflow.yml`.
 | Method | Path | Purpose |
 |---|---|---|
 | `POST` | `/predict` | 12-lead ECG (≥ 10 s, any sampling rate from 100–2000 Hz) → class probabilities, diagnoses, suggested actions, optional explanation |
+| `GET` | `/app/` | Learner UI (the root `/` redirects here) |
+| `GET` | `/cases`, `/cases/{id}` | Practice cases: the list, and an ECG without its answer |
+| `POST` | `/cases/{id}/reveal` | Student's read in → cardiologist label, model output, per-class agreement |
+| `GET` | `/cases/{id}/explanation/{class}` | Model attention for one class (per lead and over time) |
+| `GET` | `/model/card` | Served model's metrics, subgroups, calibration, lineage, limitations |
 | `GET` | `/model/info` | Model version, classes, device |
 | `GET` | `/health` | Liveness check |
 | `GET` | `/ready` | Readiness: returns 503 until the model is loaded |
@@ -219,7 +244,9 @@ running.
 
 ```
 src/
-  api/                  FastAPI app, routes (predict, health, drift, bias)
+  api/                  FastAPI app, routes (predict, cases, model card, health, monitoring)
+    static/             learner UI: Preact + htm + uPlot, vendored, no build step
+  casebank/             builds and loads the precomputed practice-case bank
   ml/
     models/             1D ResNet
     preprocessing/      prepare_ecg(), shared by training and serving
@@ -228,7 +255,8 @@ src/
     explainability/     Grad-CAM + gradient x input, optional local LLM phrasing
   monitoring/           Evidently drift, fairness analysis
   db.py                 env-driven Postgres DSN
-scripts/                train, promote, gcp_inventory, monitoring CLIs
+models/                 champion weights + model_meta.json, case_bank/ (Git LFS)
+scripts/                train, promote, case bank, ensembles, gcp_inventory, deploy
 airflow/dags/           drift (hourly) and bias (daily) monitoring
 k8s/                    kustomize: base (local stack) + prod overlay (GKE)
 infra/                  Terraform: foundation (cost guardrails) + platform (GKE, Cloud SQL)
@@ -241,8 +269,10 @@ tests/unit/             API, inference, explainability, training, preprocessing
 ## Limitations and roadmap
 
 - **HYP is weak** (AUC 0.83, F1 0.46), and the model is less accurate for
-  women and older patients. Augmentation and multi-seed ensembles on the proper
-  split are the next modelling steps.
+  women and older patients. Both reproduce on every seed. Training-time
+  augmentation helps every seed (+0.003 macro AUC), and an augmented 3-seed
+  ensemble reaches **0.920** (D-62). Serving changes once the experiment program
+  finishes (D-51).
 - **The action table is illustrative.** PTB-XL's MI labels don't separate acute
   from old infarction, so "activate cath lab" is not a supportable output from
   this model.
@@ -250,8 +280,9 @@ tests/unit/             API, inference, explainability, training, preprocessing
   distributions, not the ECG signal itself. The live bias check uses demographic
   parity, which flags real prevalence differences; label-based checks like the
   training-time subgroup AUC are the goal.
-- **Infra rebuild:** Terraform (GKE Autopilot, Cloud SQL, GCS-backed MLflow and
-  DVC, keyless GitHub to GCP auth) and a budget kill switch.
+- **The live demo is ephemeral by design.** It's brought up for interviews with
+  `make demo-up` (about $0.35 per demo) and torn down afterward; see
+  [infra/README.md](infra/README.md).
 
 ---
 
