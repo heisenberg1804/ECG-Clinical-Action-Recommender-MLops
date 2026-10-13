@@ -88,6 +88,7 @@ earlier decision, set the old one's status to `Superseded by D-xx`.
 | [D-60](#d-60-ship-the-ui-in-two-increments) | Ship the UI in two increments | Product | Accepted (v1a shipped) |
 | [D-61](#d-61-long-running-studies-run-from-a-pinned-git-worktree) | Long-running studies run from a pinned git worktree | Experiments | Accepted |
 | [D-62](#d-62-train-time-augmentation-is-a-consistent-but-modest-gain) | Train-time augmentation is a consistent but modest gain | Experiments | Accepted |
+| [D-63](#d-63-dependency-updates-are-grouped-major-versions-are-planned-migrations) | Dependency updates are grouped; major versions are planned migrations | Reproducibility | Accepted |
 
 ---
 
@@ -660,6 +661,21 @@ The API exposes these on `/metrics` (Prometheus): `ecg_prediction_latency_second
   - Its wider subgroup gap comes largely from the noisy under-40 group (D-52) and stays well inside the gate.
 - **Decision**: Keep `--augment` on for the remaining experiments, and treat the augmented ensemble as the candidate to beat. Serving is still deferred to the end of the program (D-51).
 
+### D-63: Dependency updates are grouped; major versions are planned migrations
+- **Status**: Accepted (2026-10-13)
+- **Context**: Turning on Dependabot security updates raised about 184 alerts as one PR per package. Each PR cost about 8 minutes of CI and a merge, and because every one rewrites `uv.lock`, each merge made the rest stale, triggering rebases and CI reruns. Turning on version updates then produced individual major bumps:
+  - pandas 2 → 3 failed CI, because the new Arrow string dtype breaks our code.
+  - The 19-package minor/patch group failed too: FastAPI 0.143 breaks `prometheus-fastapi-instrumentator` 7.1, which needs 8.x.
+- **Decision** (`.github/dependabot.yml`):
+  - All Python security fixes in one grouped PR.
+  - Minor and patch updates grouped monthly.
+  - GitHub Actions and Docker base images grouped monthly.
+  - **Semver-major updates ignored** for version updates. Each major is a planned migration PR with targeted verification.
+  - Grouped PRs are still single commits, so they fit the one-commit-per-PR workflow.
+- **Why**: One PR per package is the right default for isolating breakage, but at this volume it costs more than it protects. Majors are exactly where an automated bump is least safe.
+- **Trade-offs**: Majors can fall behind unless they're scheduled deliberately. pandas 3, numpy 2 and instrumentator 8 are already on the list.
+- **Where**: `.github/dependabot.yml`
+
 ---
 
 ## Product & UI
@@ -791,3 +807,4 @@ The design review that shaped these decisions checked the first proposal against
 | 2026-10-12 | Evaluation metrics reference added (definitions, computation, caveats, test-fold prevalence and subgroup sizes); D-52. Product & UI design accepted after an architecture review: D-53–D-60 |
 | 2026-10-13 | Augmentation study: +0.0033 single-model (all seeds), augmented 3-seed ensemble 0.9199. D-62; study-worktree lesson D-61 |
 | 2026-10-13 | Learner UI v1a shipped: 281-case bank, case API, model card, 12-lead viewer, read/reveal/attention loop. D-53, D-54, D-55, D-60 updated |
+| 2026-10-13 | Dependabot grouped, with automated major bumps turned off after the per-package flood and two failing upgrades. D-63 |
