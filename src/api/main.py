@@ -5,9 +5,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from src.api.routes import bias, drift, health, predict
+from src.api.routes import bias, cases, drift, health, model_card, predict
 from src.ml.inference.predictor import get_predictor
 
 
@@ -17,8 +18,9 @@ async def lifespan(app: FastAPI):
     # request doesn't pay the load cost. A failure keeps /health up (so the
     # pod can be inspected) while /ready reports not-ready.
     try:
-        get_predictor()
+        predictor = get_predictor()
         predict.MODEL_LOADED.set(1)
+        cases.load_bank(predictor.model_version)
     except Exception as e:
         predict.MODEL_LOADED.set(0)
         print(f"❌ Model failed to load at startup: {e}")
@@ -41,11 +43,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Case signals and heatmaps are large JSON arrays; they compress about 4x
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
 # Prometheus metrics instrumentation
 Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 
 # Include routers
 app.include_router(health.router, tags=["Health"])
 app.include_router(predict.router, tags=["Predictions"])
+app.include_router(cases.router, tags=["Learner cases"])
+app.include_router(model_card.router, tags=["Model"])
 app.include_router(drift.router, prefix="/monitoring", tags=["Monitoring"])
 app.include_router(bias.router, prefix="/monitoring", tags=["Monitoring"])
