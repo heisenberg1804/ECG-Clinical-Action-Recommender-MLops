@@ -93,6 +93,8 @@ def test_model_card_derives_limitations(client):
     assert card["model_version"] == get_predictor().model_version
     assert card["case_bank"]["n_cases"] == 3
     assert any(line.startswith("Weakest class: HYP") for line in card["limitations"])
+    assert any(line.startswith("Less accurate for patients over 65")
+               for line in card["limitations"])
 
 
 def test_mismatched_bank_disables_only_case_routes(tmp_path, monkeypatch):

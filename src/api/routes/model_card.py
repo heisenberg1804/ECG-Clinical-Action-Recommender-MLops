@@ -9,11 +9,23 @@ from src.ml.inference.predictor import get_predictor
 
 router = APIRouter()
 
+GROUP_NAMES = {
+    "sex_male": "male patients",
+    "sex_female": "female patients",
+    "age_lt40": "patients under 40",
+    "age_40to65": "patients aged 40-65",
+    "age_gt65": "patients over 65",
+}
+
 STATIC_LIMITATIONS = [
     "Educational use only: not a medical device and not for patient care.",
     "PTB-XL's MI labels don't distinguish acute from old infarction.",
     "Validated on one dataset (PTB-XL); performance elsewhere is unknown.",
 ]
+
+
+def group_name(key: str) -> str:
+    return GROUP_NAMES.get(key, key.replace("_", " "))
 
 
 def derived_limitations(meta: dict) -> list[str]:
@@ -26,8 +38,8 @@ def derived_limitations(meta: dict) -> list[str]:
     groups = meta.get("test_subgroup_auc", {})
     if groups:
         lo, hi = min(groups, key=groups.get), max(groups, key=groups.get)
-        out.append(f"Accuracy varies by patient group: {lo.replace('_', ' ')} AUC "
-                   f"{groups[lo]:.3f} vs {hi.replace('_', ' ')} {groups[hi]:.3f}.")
+        out.append(f"Less accurate for {group_name(lo)} (AUC {groups[lo]:.3f}) "
+                   f"than for {group_name(hi)} ({groups[hi]:.3f}).")
     return out
 
 

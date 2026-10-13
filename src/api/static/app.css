@@ -110,6 +110,17 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .attn-key { display: inline-block; width: 10px; height: 10px; background: var(--accent); opacity: 0.45; vertical-align: -1px; }
 @media (prefers-color-scheme: dark) { .ok { color: #6fcf97; } }
 
+.card summary { cursor: pointer; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; list-style: none; }
+.card summary::-webkit-details-marker { display: none; }
+.card summary h2::before { content: "▸ "; color: var(--muted); }
+.card[open] summary h2::before { content: "▾ "; }
+.card summary h2 { display: inline; }
+table.metrics { border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; width: 100%; }
+table.metrics th, table.metrics td { padding: 4px 8px; text-align: right; border-bottom: 1px solid var(--line); }
+table.metrics th:first-child { text-align: left; }
+table.metrics thead th { color: var(--muted); font-weight: 600; }
+.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
 footer.disclaimer {
   max-width: 1180px; margin: 8px auto 24px; padding: 0 16px; font-size: 12px; color: var(--muted);
 }
