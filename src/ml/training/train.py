@@ -34,7 +34,7 @@ from mlflow.tracking import MlflowClient  # noqa: E402
 from torch.utils.data import DataLoader  # noqa: E402
 from tqdm import tqdm  # noqa: E402
 
-from src.ml.models.resnet1d import resnet18_1d  # noqa: E402
+from src.ml.models.resnet1d import build_model  # noqa: E402
 from src.ml.training import metrics as m  # noqa: E402
 from src.ml.training.data import (  # noqa: E402
     SUPERCLASSES,
@@ -59,7 +59,8 @@ class TrainConfig:
     weight_decay: float = 1e-4
     dropout: float = 0.3
     patience: int = 5
-    loss: str = "bce"  # "bce" or "focal"
+    arch: str = "resnet18"  # "resnet18" or "resnet34"
+    loss: str = "bce"  # "bce", "focal" or "balanced" (class-weighted BCE)
     augment: bool = False  # Train-time augmentation (training split only)
     focal_gamma: float = 2.0
     num_workers: int = 4
@@ -83,6 +84,23 @@ class FocalLoss(nn.Module):
         bce = fn.binary_cross_entropy_with_logits(logits, targets, reduction="none")
         p_t = torch.exp(-bce)
         return ((1 - p_t) ** self.gamma * bce).mean()
+
+
+def positive_class_weights(labels: np.ndarray) -> torch.Tensor:
+    """BCE pos_weight per class: negatives / positives, so rare classes weigh as much
+    as common ones. Computed from the training split only."""
+    positives = labels.sum(axis=0)
+    return torch.tensor((len(labels) - positives) / np.maximum(positives, 1), dtype=torch.float32)
+
+
+def make_criterion(cfg: TrainConfig, train_labels: np.ndarray) -> nn.Module:
+    if cfg.loss == "bce":
+        return nn.BCEWithLogitsLoss()
+    if cfg.loss == "focal":
+        return FocalLoss(cfg.focal_gamma)
+    if cfg.loss == "balanced":
+        return nn.BCEWithLogitsLoss(pos_weight=positive_class_weights(train_labels))
+    raise ValueError(f"Unknown loss {cfg.loss!r}")
 
 
 def seed_everything(seed: int) -> None:
@@ -185,8 +203,8 @@ def train(cfg: TrainConfig) -> dict:
     print(f"Device {device} | " + " | ".join(f"{k}: {len(v)}" for k, v in splits.items()))
 
     # ---------------- Model ----------------
-    model = resnet18_1d(num_classes=len(SUPERCLASSES), dropout_rate=cfg.dropout).to(device)
-    criterion = FocalLoss(cfg.focal_gamma) if cfg.loss == "focal" else nn.BCEWithLogitsLoss()
+    model = build_model(cfg.arch, len(SUPERCLASSES), dropout_rate=cfg.dropout).to(device)
+    criterion = make_criterion(cfg, np.stack(splits["train"]["labels"].to_numpy())).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", factor=0.5,
                                                            patience=2)
@@ -246,7 +264,8 @@ def train(cfg: TrainConfig) -> dict:
         digest = hashlib.sha256(weights_path.read_bytes()).hexdigest()[:12]
 
         meta = {
-            "model_version": f"resnet18-{digest}",
+            "model_version": f"{cfg.arch}-{digest}",
+            "arch": cfg.arch,
             "mlflow_run_id": run.info.run_id,
             "classes": SUPERCLASSES,
             "thresholds": thresholds,

@@ -202,6 +202,17 @@ def resnet34_1d(
     )
 
 
+# Architectures by name: the `arch` training param and the model_meta.json field
+ARCHITECTURES = {"resnet18": resnet18_1d, "resnet34": resnet34_1d}
+
+
+def build_model(arch: str, num_classes: int, dropout_rate: float = 0.3) -> ResNet1D:
+    """Construct a model by architecture name."""
+    if arch not in ARCHITECTURES:
+        raise ValueError(f"Unknown architecture {arch!r}; expected one of {sorted(ARCHITECTURES)}")
+    return ARCHITECTURES[arch](num_classes=num_classes, dropout_rate=dropout_rate)
+
+
 if __name__ == "__main__":
     # Test the model
     model = resnet18_1d(num_classes=5)

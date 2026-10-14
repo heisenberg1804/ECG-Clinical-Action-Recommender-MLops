@@ -28,7 +28,7 @@ from torch.utils.data import DataLoader
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.ml.models.resnet1d import resnet18_1d  # noqa: E402
+from src.ml.models.resnet1d import build_model  # noqa: E402
 from src.ml.training import metrics as m  # noqa: E402
 from src.ml.training.data import (  # noqa: E402
     SUPERCLASSES,
@@ -92,7 +92,9 @@ def main() -> int:
 
     val_probs, test_probs, member_auc = [], [], {}
     for run_id in member_ids:
-        model = resnet18_1d(num_classes=len(SUPERCLASSES))
+        # Runs before the arch param existed were all ResNet-18
+        arch = client.get_run(run_id).data.params.get("arch", "resnet18")
+        model = build_model(arch, num_classes=len(SUPERCLASSES))
         model.load_state_dict(torch.load(member_weights(client, run_id), map_location="cpu",
                                          weights_only=True))
         model = model.to(device).eval()
