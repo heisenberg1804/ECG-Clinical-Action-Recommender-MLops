@@ -192,6 +192,7 @@ DAGs, see the header of `docker/docker-compose.airflow.yml`.
 | `GET` | `/cases`, `/cases/{id}` | Practice cases: the list, and an ECG without its answer |
 | `POST` | `/cases/{id}/reveal` | Student's read in → cardiologist label, model output, per-class agreement |
 | `GET` | `/cases/{id}/explanation/{class}` | Model attention for one class (per lead and over time) |
+| `POST` | `/tutor/session`, `/tutor/commit`, `/tutor/chat` | ECG tutor (Claude, passcode-gated, off unless `CHAT_ENABLED=true`): start a session, commit a read to unlock the answer tools, chat over server-sent events |
 | `GET` | `/model/card` | Served model's metrics, subgroups, calibration, lineage, limitations |
 | `GET` | `/model/info` | Model version, classes, device |
 | `GET` | `/health` | Liveness check |

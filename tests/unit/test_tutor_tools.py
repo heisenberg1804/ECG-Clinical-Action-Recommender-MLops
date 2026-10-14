@@ -48,10 +48,14 @@ def secret(monkeypatch):
     monkeypatch.setenv("TUTOR_SESSION_SECRET", "test-secret")
 
 
+def make_toolbox(path) -> ToolBox:
+    synthetic_bank(path, "resnet18-test")
+    return ToolBox(CaseBank.load(path), FakePredictor(), META)
+
+
 @pytest.fixture
 def toolbox(tmp_path):
-    synthetic_bank(tmp_path, "resnet18-test")
-    return ToolBox(CaseBank.load(tmp_path), FakePredictor(), META)
+    return make_toolbox(tmp_path)
 
 
 reading = s.Session(case_id="case-001")

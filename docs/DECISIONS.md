@@ -95,6 +95,7 @@ earlier decision, set the old one's status to `Superseded by D-xx`.
 | [D-67](#d-67-the-api-image-installs-only-serving-dependencies-monitoring-stays-batch) | The API image installs only serving dependencies; monitoring stays batch | Serving | Accepted |
 | [D-68](#d-68-loss-and-architecture-study-pre-registered) | Loss and architecture study, pre-registered | Experiments | In progress |
 | [D-69](#d-69-tutor-tools-one-frozen-set-gated-when-they-run-occlusion-re-scored-live) | Tutor tools: one frozen set, gated when they run, occlusion re-scored live | Product | Accepted (built) |
+| [D-70](#d-70-the-tutors-chat-loop-append-only-history-streamed-with-hard-spend-stops) | The tutor's chat loop: append-only history, streamed, with hard spend stops | Product | Accepted (built) |
 
 ---
 
@@ -867,6 +868,35 @@ The design review that shaped these decisions checked the first proposal against
   - Similar cases show other cases' labels, which can spoil those cases for later practice. Acceptable at this bank size.
 - **Where**: `src/tutor/session.py`, `src/tutor/tools.py`, `tests/unit/test_tutor_tools.py`
 
+### D-70: The tutor's chat loop: append-only history, streamed, with hard spend stops
+- **Status**: Accepted (built, 2026-10-14). Implements D-56 to D-58; the UI and deployment follow.
+- **Decision**:
+  - **Model**: Claude Opus 5.5 (`claude-opus-5-5`), chosen by the owner for tutoring quality over cost (about $0.50–1.20 per 15-message demo). Effort is set explicitly to `medium`, because Opus 5.5's default differs from earlier models. Thinking is adaptive, the only mode Opus 5.5 accepts. The model, effort and max tokens are env-configurable without a deploy.
+  - **Refusals**: `fallbacks: "default"` retries a safety-classifier refusal on Anthropic's recommended model, server-side. A refusal that still comes back becomes a polite notice, not an error.
+  - **Append-only history**:
+    - The system prompt and the tool list never change.
+    - The committed read arrives as one appended mid-conversation *system* message, which only the server writes. A forged one in the client's history is rejected with a 400.
+    - `drop_block` means a tampered history loses its thinking blocks instead of failing the request.
+    - Messages are only appended, which is also what makes prompt caching work turn after turn.
+  - **Every stop reason is handled**:
+    - A truncated (`max_tokens`) tool call is never run, and is dropped from the history.
+    - Tool rounds are capped at 6 per turn, with one closing call to answer.
+    - A commit note left without an assistant reply is held back until the next turn, because the API requires a system message to be followed by one.
+  - **Streaming**: server-sent events carry text and progress-update deltas (Opus 5.5's between-tool-call notes, via `display: "updates"`), tool calls with their source labels, and a closing event with the messages to append and the next session token.
+  - **Spend controls**:
+    - `CHAT_ENABLED` (off by default)
+    - a passcode
+    - 30 turns per session
+    - 10 messages per minute per client
+    - a $3 daily budget, priced at the higher fallback-model rates so it errs high
+    - the Anthropic Console's $20/month limit as the backstop
+- **Verified**: 31 tests against a scripted fake model: locking, the prefix only ever growing, the commit note appearing once, history forgery, truncation, refusals, round caps, every limit, the endpoint SSE flow, and the exact request shape sent to Anthropic. They run on the serving-only dependency set too (D-67). A live smoke test waits for an API key.
+- **Trade-offs**:
+  - The rate limit and budget live in memory: right for the one-replica demo, but each extra replica would get its own budget.
+  - Behind GKE's L4 load balancer the client IP may be the node's, which makes the per-client limit effectively global. The daily budget is the hard ceiling.
+  - Turn logging to Postgres (D-59) is still to come.
+- **Where**: `src/tutor/{llm,chat,prompt,limits}.py`, `src/api/routes/tutor.py`, `tests/unit/test_tutor_chat.py`, `.env.example`
+
 ### D-58: Cost and abuse controls on the chat endpoint
 - **Status**: Accepted (design, 2026-10-12). Amends D-22 for the chat endpoint.
 - **Context**: The API is public and unauthenticated (D-22). An LLM endpoint there would let anyone spend the LLM bill.
@@ -936,3 +966,4 @@ The design review that shaped these decisions checked the first proposal against
 | 2026-10-14 | API image installs serving dependencies only (2.09 → 1.24 GB); in-request monitoring endpoints removed, monitoring stays batch. D-67 |
 | 2026-10-14 | Loss and architecture study pre-registered (balanced BCE, focal, ResNet-34 × 3 seeds); servable-architecture promotion gate. D-68 |
 | 2026-10-14 | Tutor core: signed session token and nine gated case-bank and model tools (no LLM yet). D-69 |
+| 2026-10-14 | Tutor chat loop and endpoints on Claude Opus 5.5: SSE streaming, append-only history, refusal fallback, spend controls. D-70 |

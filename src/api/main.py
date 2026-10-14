@@ -11,7 +11,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from src.api.routes import cases, health, model_card, predict
+from src.api.routes import cases, health, model_card, predict, tutor
 from src.ml.inference.predictor import get_predictor
 
 
@@ -57,6 +57,7 @@ app.include_router(health.router, tags=["Health"])
 app.include_router(predict.router, tags=["Predictions"])
 app.include_router(cases.router, tags=["Learner cases"])
 app.include_router(model_card.router, tags=["Model"])
+app.include_router(tutor.router, tags=["Tutor"])
 
 # Learner UI (D-55): static files, no build step. The root redirects to it for demos.
 app.mount("/app", StaticFiles(directory=Path(__file__).parent / "static", html=True), name="app")
