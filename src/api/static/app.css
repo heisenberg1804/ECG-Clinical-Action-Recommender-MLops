@@ -121,6 +121,23 @@ table.metrics th:first-child { text-align: left; }
 table.metrics thead th { color: var(--muted); font-weight: 600; }
 .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
 
+.tutor .transcript { max-height: 420px; overflow-y: auto; margin: 8px 0; display: flex; flex-direction: column; gap: 10px; }
+.msg { max-width: 85%; padding: 8px 12px; border-radius: var(--radius); border: 1px solid var(--line); }
+.msg p { margin: 0 0 6px; } .msg p:last-child { margin-bottom: 0; }
+.msg ul { margin: 0 0 6px; padding-left: 18px; }
+.msg.you { align-self: flex-end; background: var(--bg); }
+.msg.tutor { align-self: flex-start; background: var(--surface); }
+.msg .progress { color: var(--muted); font-style: italic; font-size: 13px; }
+.sources { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.source { font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.source.err { border-style: dashed; }
+.row { display: flex; gap: 8px; }
+.row input {
+  flex: 1; min-width: 0; font: inherit; color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px;
+}
+@media (max-width: 600px) { .msg { max-width: 100%; } }
+
 footer.disclaimer {
   max-width: 1180px; margin: 8px auto 24px; padding: 0 16px; font-size: 12px; color: var(--muted);
 }

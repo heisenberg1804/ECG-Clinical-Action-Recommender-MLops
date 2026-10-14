@@ -85,7 +85,7 @@ earlier decision, set the old one's status to `Superseded by D-xx`.
 | [D-57](#d-57-answer-locking-via-signed-session-state-the-server-stays-stateless) | Answer locking via signed session state; the server stays stateless | Backend | Accepted (design) |
 | [D-58](#d-58-cost-and-abuse-controls-on-the-chat-endpoint) | Cost and abuse controls on the chat endpoint | Security | Accepted (design) |
 | [D-59](#d-59-llm-quality-is-tested-deterministically-in-ci-and-evaluated-on-demand) | LLM quality is tested deterministically in CI and evaluated on demand | Testing | Accepted (design) |
-| [D-60](#d-60-ship-the-ui-in-two-increments) | Ship the UI in two increments | Product | Accepted (v1a shipped) |
+| [D-60](#d-60-ship-the-ui-in-two-increments) | Ship the UI in two increments | Product | Accepted (v1a shipped, v1b built) |
 | [D-61](#d-61-long-running-studies-run-from-a-pinned-git-worktree) | Long-running studies run from a pinned git worktree | Experiments | Accepted |
 | [D-62](#d-62-train-time-augmentation-is-a-consistent-but-modest-gain) | Train-time augmentation is a consistent but modest gain | Experiments | Accepted |
 | [D-63](#d-63-dependency-updates-are-grouped-major-versions-are-planned-migrations) | Dependency updates are grouped; major versions are planned migrations | Reproducibility | Accepted |
@@ -919,7 +919,7 @@ The design review that shaped these decisions checked the first proposal against
 - **Why**: Real LLM calls in CI cost money, need a secret, and are non-deterministic. Tracing production turns to MLflow would make serving depend on MLflow at runtime, which D-18 deliberately avoids.
 
 ### D-60: Ship the UI in two increments
-- **Status**: Accepted (2026-10-12). **v1a shipped 2026-10-13**; v1b (the tutor) is next.
+- **Status**: Accepted (2026-10-12). **v1a shipped 2026-10-13**; **v1b (the tutor) built 2026-10-14** (D-69, D-70, and the UI panel). Deployment wiring and the eval suite follow.
 - **Decision**:
   - **v1a**: the case bank, case viewer, reveal, and model card, with no LLM.
   - **v1b**: the tutor (D-56–D-59) on top.
@@ -967,3 +967,4 @@ The design review that shaped these decisions checked the first proposal against
 | 2026-10-14 | Loss and architecture study pre-registered (balanced BCE, focal, ResNet-34 × 3 seeds); servable-architecture promotion gate. D-68 |
 | 2026-10-14 | Tutor core: signed session token and nine gated case-bank and model tools (no LLM yet). D-69 |
 | 2026-10-14 | Tutor chat loop and endpoints on Claude Opus 5.5: SSE streaming, append-only history, refusal fallback, spend controls. D-70 |
+| 2026-10-14 | Tutor panel in the learner UI: passcode, streamed replies with progress lines and source chips; Reveal commits the read. D-60 |
