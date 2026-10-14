@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from src.casebank.store import CaseBank, dequantize
-from src.ml.training.data import SUPERCLASSES
+from src.ml.labels import SUPERCLASSES
 
 router = APIRouter()
 

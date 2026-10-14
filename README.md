@@ -131,9 +131,9 @@ recorded in [docs/DECISIONS.md](docs/DECISIONS.md).
 | Release gates | Promote only if test AUC ≥ champion's and the subgroup AUC gap ≤ 0.05 | `scripts/promote_model.py` |
 | No train/serve skew | Training and the API call the same `prepare_ecg()` | `src/ml/preprocessing/signal.py` |
 | Explainability | Grad-CAM (when) plus gradient × input (which leads), computed on the exact input that was scored | `src/ml/explainability/explainer.py` |
-| CI | Lint, 41 tests, kustomize render and Docker build on every PR | `.github/workflows/ci.yml` |
+| CI | Lint, 77 tests (rerun with serving-only dependencies), kustomize render and Docker build on every PR | `.github/workflows/ci.yml` |
 | CD | Runs only after CI passes on `main`; smoke test, then automatic rollback on failure | `.github/workflows/cd.yml` |
-| Monitoring | Every prediction logged to Postgres; Evidently drift and fairness DAGs in Airflow with email alerts | `src/monitoring/`, `airflow/dags/` |
+| Monitoring | Every prediction logged to Postgres; Evidently drift and fairness checks run as batch jobs (Airflow DAGs with email alerts, or `scripts/monitor_*.py`), never in the serving path | `src/monitoring/`, `airflow/dags/` |
 | Secrets | Nothing secret in git; credentials come from gitignored env files and k8s Secrets | `*.example` files |
 
 ---
@@ -147,7 +147,7 @@ optionally Docker.
 git clone https://github.com/heisenberg1804/ECG-Clinical-Action-Recommender-MLops.git
 cd ECG-Clinical-Action-Recommender-MLops
 git lfs pull                      # model weights
-uv sync --all-extras
+uv sync                           # serving + training + monitoring + dev
 ```
 
 **Get the data.** The DVC remote is being rebuilt, so download PTB-XL 1.0.3 from
@@ -196,7 +196,6 @@ DAGs, see the header of `docker/docker-compose.airflow.yml`.
 | `GET` | `/model/info` | Model version, classes, device |
 | `GET` | `/health` | Liveness check |
 | `GET` | `/ready` | Readiness: returns 503 until the model is loaded |
-| `GET` | `/monitoring/drift/status`, `/monitoring/bias/status` | Monitoring summaries from the prediction log |
 | `GET` | `/metrics` | Prometheus metrics |
 
 Real output for PTB-XL record 210 (test fold, labelled inferior MI):

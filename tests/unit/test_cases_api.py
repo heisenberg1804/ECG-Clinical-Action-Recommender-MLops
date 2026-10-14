@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from src.casebank.store import write_bank
 from src.ml.inference.predictor import get_predictor
-from src.ml.training.data import SUPERCLASSES
+from src.ml.labels import SUPERCLASSES
 
 ANSWER_KEYS = {"labels", "primary_label", "label_likelihoods", "report", "model", "ptbxl_ecg_id"}
 

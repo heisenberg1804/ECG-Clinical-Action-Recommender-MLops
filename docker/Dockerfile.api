@@ -18,9 +18,9 @@ WORKDIR /app
 # Copy dependency definitions
 COPY pyproject.toml uv.lock ./
 
-# Install dependencies into a virtual environment
+# Install only the serving dependencies (no training, monitoring or dev groups; D-67)
 # --compile-bytecode speeds up startup time
-RUN uv sync --frozen --no-dev --compile-bytecode
+RUN uv sync --frozen --no-default-groups --compile-bytecode
 
 # ==========================================
 # Stage 2: The Runtime (Slim & Fast)
