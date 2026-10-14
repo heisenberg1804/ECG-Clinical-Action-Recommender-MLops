@@ -94,6 +94,7 @@ earlier decision, set the old one's status to `Superseded by D-xx`.
 | [D-66](#d-66-container-python-stays-on-the-version-ci-tests) | Container Python stays on the version CI tests | Reproducibility | Accepted |
 | [D-67](#d-67-the-api-image-installs-only-serving-dependencies-monitoring-stays-batch) | The API image installs only serving dependencies; monitoring stays batch | Serving | Accepted |
 | [D-68](#d-68-loss-and-architecture-study-pre-registered) | Loss and architecture study, pre-registered | Experiments | In progress |
+| [D-69](#d-69-tutor-tools-one-frozen-set-gated-when-they-run-occlusion-re-scored-live) | Tutor tools: one frozen set, gated when they run, occlusion re-scored live | Product | Accepted (built) |
 
 ---
 
@@ -847,6 +848,25 @@ The design review that shaped these decisions checked the first proposal against
 - **Why**: An in-memory session store breaks on pod restart or with two replicas, and a database-backed one couples chat to Cloud SQL. A signed token is stateless, survives restarts, and can't be forged to skip the lock.
 - **Trade-offs**: A client could edit its own history. That's acceptable, because the lock is enforced by tool gating, not by the history.
 
+### D-69: Tutor tools: one frozen set, gated when they run, occlusion re-scored live
+- **Status**: Accepted (built, 2026-10-14). Refines D-56 and D-57.
+- **Decision**:
+  - **Nine tools, declared on every request**, including those the student hasn't unlocked yet:
+    - always available: case facts, lead measurement, model performance
+    - locked: cardiologist label, model prediction, model attention, occlusion by lead, occlusion by time window, similar cases
+  - The tool list and system prompt never change during a session. The answer lock lives in `ToolBox.run()`: before the read is committed, a locked tool returns a "locked" result telling the model not to hint.
+  - **Occlusion runs the served model live** on the bank's 250 Hz display signal, with the chosen leads or window flattened. *Before* and *after* both come from that same signal, so the difference is like for like. On case-001 the re-scored probabilities match the bank's to within 0.001, at about 66 ms per call.
+  - **Strict tool schemas** use plain types and enums (lead names, classes), so the model can't ask for lead "V9". Ranges such as window bounds are checked by pydantic when the tool runs, because eager input streaming hands over unvalidated input. A bad input returns an error result; it never raises.
+  - Thresholds and performance numbers come from `model_meta.json`, the served model's own record (D-17), not the bank's copy.
+  - **The session token is HMAC-SHA256 signed** and carries the case, the phase, the committed answer and the turn count, with a 4-hour lifetime. The secret comes from `TUTOR_SESSION_SECRET` and is required.
+- **Why**:
+  - Changing the tool list or system prompt mid-session would invalidate the prompt cache, and Opus 5.5's replayed thinking blocks, which are bound to an identical prefix. Gating at execution keeps the prefix fixed and enforces the lock where the client can't reach it.
+  - Precomputing occlusions for every lead combination isn't feasible, while one re-score is cheap.
+- **Trade-offs**:
+  - A client could replay an old token to reset its turn count. The per-IP rate limit and the daily budget (D-58) still cap spend.
+  - Similar cases show other cases' labels, which can spoil those cases for later practice. Acceptable at this bank size.
+- **Where**: `src/tutor/session.py`, `src/tutor/tools.py`, `tests/unit/test_tutor_tools.py`
+
 ### D-58: Cost and abuse controls on the chat endpoint
 - **Status**: Accepted (design, 2026-10-12). Amends D-22 for the chat endpoint.
 - **Context**: The API is public and unauthenticated (D-22). An LLM endpoint there would let anyone spend the LLM bill.
@@ -915,3 +935,4 @@ The design review that shaped these decisions checked the first proposal against
 | 2026-10-13 | Images pinned back to Python 3.11 after a Dependabot tag bump to 3.14 slipped past the major-only rule. D-66 |
 | 2026-10-14 | API image installs serving dependencies only (2.09 → 1.24 GB); in-request monitoring endpoints removed, monitoring stays batch. D-67 |
 | 2026-10-14 | Loss and architecture study pre-registered (balanced BCE, focal, ResNet-34 × 3 seeds); servable-architecture promotion gate. D-68 |
+| 2026-10-14 | Tutor core: signed session token and nine gated case-bank and model tools (no LLM yet). D-69 |
