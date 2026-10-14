@@ -20,6 +20,7 @@ dependencies = [
     "torch>=2.1.0",
     "prometheus-client>=0.19.0",
     "prometheus-fastapi-instrumentator>=8.0.0",  # 7.x crashes on FastAPI >= 0.143 routers
+    "anthropic>=1.0",  # tutor LLM (D-56)
 ]
 
 [dependency-groups]
