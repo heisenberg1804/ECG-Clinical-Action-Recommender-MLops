@@ -85,7 +85,30 @@ About a quarter of the cases (15 per class) are ones **the model gets wrong**, c
 
 Run it with `make serve`, then open http://localhost:8000/ (it redirects to `/app/`). After promoting a new model, rebuild the cases with `make case-bank`; CI fails if the committed cases don't match the committed model.
 
-*Next:* a tutor chat that can operate on the case and the model ("cover lead III: does it still say MI?"). See D-53 to D-60 in the [decision record](docs/DECISIONS.md).
+### Tutor (optional)
+
+A chat tutor (Claude Opus 5.5) that works **on this case and this model**. While you read, it
+asks Socratic questions and measures the tracing for you ("lead II swings 1.6 mV peak to
+peak"). After you commit, it compares your read with the cardiologist's, and can re-run the
+model with leads or time windows flattened ("cover the inferior leads: does it still call
+MI?"). Every case-specific claim comes from a tool result, shown as a source chip under the
+reply. The answer tools are locked on the server until you commit, so the tutor can't give
+the answer away. See D-56 to D-58 and D-69 to D-71 in the [decision record](docs/DECISIONS.md).
+
+It's off unless configured, behind a demo passcode, and capped per session, per client and
+per day:
+
+- **Locally**: set `CHAT_ENABLED=true`, `ANTHROPIC_API_KEY`, `TUTOR_PASSCODE` and
+  `TUTOR_SESSION_SECRET` in `.env` (see `.env.example`), then `make serve`.
+- **On GKE**: add the two values once; every later `make demo-up` turns the tutor on.
+
+  ```bash
+  printf %s "$ANTHROPIC_API_KEY" | gcloud secrets versions add tutor-anthropic-api-key --data-file=-
+  printf %s "your-demo-passcode" | gcloud secrets versions add tutor-passcode --data-file=-
+  ```
+
+  Also set a monthly spend limit in the Anthropic Console; that's the backstop behind the
+  app's own daily budget.
 
 ---
 

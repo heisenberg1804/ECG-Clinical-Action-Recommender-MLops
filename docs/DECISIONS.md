@@ -96,6 +96,7 @@ earlier decision, set the old one's status to `Superseded by D-xx`.
 | [D-68](#d-68-loss-and-architecture-study-pre-registered) | Loss and architecture study, pre-registered | Experiments | In progress |
 | [D-69](#d-69-tutor-tools-one-frozen-set-gated-when-they-run-occlusion-re-scored-live) | Tutor tools: one frozen set, gated when they run, occlusion re-scored live | Product | Accepted (built) |
 | [D-70](#d-70-the-tutors-chat-loop-append-only-history-streamed-with-hard-spend-stops) | The tutor's chat loop: append-only history, streamed, with hard spend stops | Product | Accepted (built) |
+| [D-71](#d-71-tutor-credentials-secrets-that-outlive-the-platform-and-a-tutor-thats-off-without-them) | Tutor credentials: secrets that outlive the platform, and a tutor that's off without them | Security | Accepted |
 
 ---
 
@@ -897,6 +898,20 @@ The design review that shaped these decisions checked the first proposal against
   - Turn logging to Postgres (D-59) is still to come.
 - **Where**: `src/tutor/{llm,chat,prompt,limits}.py`, `src/api/routes/tutor.py`, `tests/unit/test_tutor_chat.py`, `.env.example`
 
+### D-71: Tutor credentials: secrets that outlive the platform, and a tutor that's off without them
+- **Status**: Accepted (2026-10-14). Implements D-58's "the API key is in Secret Manager".
+- **Decision**:
+  - **The secrets live in the foundation stack**: `tutor-anthropic-api-key` and `tutor-passcode`. The platform stack is destroyed after every demo (D-28), and the key must outlive it. Terraform creates them *empty*; the owner adds the values once with `gcloud secrets versions add`, so the key never enters Terraform state, git or CI logs. The deployer service account can read them.
+  - **`deploy_gke.sh` copies them into a k8s `tutor` Secret**, together with `CHAT_ENABLED=true` and a session-signing key derived from the API key. Derived keys survive redeploys without a third secret to manage. The values go through a pipe (`--from-env-file=<(...)`), so they never appear on a command line. If either secret has no value, the script deletes the k8s Secret and the tutor stays off.
+  - **The API reads the Secret through an optional `envFrom`**, so minikube and any deploy without the Secret run exactly as before.
+  - **A pod-template annotation**, a short hash of the key and passcode, rolls the API only when the tutor's configuration changes, because env from a Secret is read only at pod start.
+- **Verified on minikube**:
+  - Without the Secret, the API runs as before.
+  - With it, `/tutor/status` reports on, a wrong passcode gets a 403, and a session token is issued.
+  - With a deliberately invalid key, the chat stream returns a clean "tutor unavailable" event instead of an error page.
+- **Cost**: two active secret versions cost about $0.12/month.
+- **Where**: `infra/terraform/foundation/tutor.tf`, `scripts/deploy_gke.sh`, `k8s/base/deployment.yaml`, `README.md`
+
 ### D-58: Cost and abuse controls on the chat endpoint
 - **Status**: Accepted (design, 2026-10-12). Amends D-22 for the chat endpoint.
 - **Context**: The API is public and unauthenticated (D-22). An LLM endpoint there would let anyone spend the LLM bill.
@@ -968,3 +983,4 @@ The design review that shaped these decisions checked the first proposal against
 | 2026-10-14 | Tutor core: signed session token and nine gated case-bank and model tools (no LLM yet). D-69 |
 | 2026-10-14 | Tutor chat loop and endpoints on Claude Opus 5.5: SSE streaming, append-only history, refusal fallback, spend controls. D-70 |
 | 2026-10-14 | Tutor panel in the learner UI: passcode, streamed replies with progress lines and source chips; Reveal commits the read. D-60 |
+| 2026-10-14 | Tutor deployment: credentials in the foundation stack, copied into an optional k8s Secret at deploy time; off without them. D-71 |
