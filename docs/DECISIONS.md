@@ -92,6 +92,7 @@ earlier decision, set the old one's status to `Superseded by D-xx`.
 | [D-64](#d-64-declare-only-whats-used-remove-dead-dependencies-and-code) | Declare only what's used; remove dead dependencies and code | Reproducibility | Accepted |
 | [D-65](#d-65-minorpatch-upgrades-land-as-one-verified-pr-checked-end-to-end) | Minor/patch upgrades land as one verified PR, checked end to end | Reproducibility | Accepted |
 | [D-66](#d-66-container-python-stays-on-the-version-ci-tests) | Container Python stays on the version CI tests | Reproducibility | Accepted |
+| [D-67](#d-67-the-api-image-installs-only-serving-dependencies-monitoring-stays-batch) | The API image installs only serving dependencies; monitoring stays batch | Serving | Accepted |
 
 ---
 
@@ -350,6 +351,24 @@ The API exposes these on `/metrics` (Prometheus): `ecg_prediction_latency_second
 - **Why**: It runs only for short demos (D-28), and interviewers need to hit it without setup.
 - **Trade-offs**: Not acceptable for real data. An API key or IAP would be the first change before any persistent deployment.
 
+### D-67: The API image installs only serving dependencies; monitoring stays batch
+- **Status**: Accepted (2026-10-14)
+- **Context**: The API image was 2.09 GB and installed 159 packages, because every dependency was a runtime dependency. Three things pulled the training and monitoring stacks into serving:
+  - `/monitoring/drift/status` ran Evidently **inside a request** over 7 days of predictions, duplicating the hourly Airflow DAG (D-23). It brought in plotly, pyarrow, scikit-learn, statsmodels and NLTK.
+  - `/monitoring/bias/status` did the same with pandas, duplicating the daily DAG.
+  - `cases.py` imported the class list from the training module, which loads wfdb, pandas and tqdm.
+  - The training code also imported scikit-learn and matplotlib without declaring them; they only arrived through MLflow and Evidently.
+- **Decision**:
+  - **Runtime dependencies are only what serving imports**: FastAPI, uvicorn, pydantic, asyncpg, numpy, scipy, torch and Prometheus (38 locked packages). `training`, `monitoring` and `dev` are `uv` dependency groups. Plain `uv sync` installs all of them; the API image uses `--no-default-groups`.
+  - **Remove the two monitoring endpoints.** Drift and bias checks run as batch jobs: the Airflow DAGs, or `scripts/monitor_drift.py` / `monitor_bias.py`. `src/monitoring/` is unchanged.
+  - **The class list moves to a dependency-free `src/ml/labels.py`.** Training re-exports it, so nothing else changes.
+  - **Declare scikit-learn and matplotlib** in the training group.
+  - **CI reruns the suite with only the serving dependencies installed.** Tests of training-side code skip there. Serving code that quietly imports a non-serving package now fails CI instead of the image.
+- **Result**: The API image went from 2.09 GB to **1.24 GB** (−41%), and its virtualenv from 2.0 to 1.1 GB; torch accounts for most of what remains. Locked versions are unchanged. Serving-only tests: 57 pass; full suite: 77. The minikube end-to-end check passes (D-65), with the API at about 396 MiB.
+- **Why**: A serving process should never run batch analytics on the request path: it competes with inference for the pod's 1 GiB and duplicates jobs that already run on a schedule. A smaller image also shortens CI builds, GKE pulls and cold starts, and every package removed is one less alert (D-64).
+- **Trade-offs**: Monitoring summaries are no longer reachable over HTTP, which matters most on the ephemeral GKE demo, where Airflow doesn't run (D-24). If that's needed, the DAGs should write their summaries to Postgres and the API should serve the latest row, still without running the analysis.
+- **Where**: `pyproject.toml`, `docker/Dockerfile.api`, `docker/Dockerfile.mlflow`, `.github/workflows/ci.yml`, `src/ml/labels.py`, `src/api/main.py`, `tests/unit/conftest.py`
+
 ---
 
 ## Monitoring & orchestration
@@ -359,6 +378,7 @@ The API exposes these on `/metrics` (Prometheus): `ecg_prediction_latency_second
 - **Decision**: Every prediction is logged to Postgres (inputs' metadata, outputs, model version, latency). `/metrics` exposes Prometheus counters and histograms. Airflow DAGs run Evidently drift checks (hourly) and bias checks (daily) and email on alerts.
 - **Known gaps**: Drift watches metadata and output distributions, not the ECG signal itself. The live bias check uses demographic parity (see D-12).
 - **Planned**: Signal-level drift features, and a retraining DAG that closes the loop (drift → retrain → gates → register).
+- **Amended (D-67)**: drift and bias are no longer served over HTTP by the API; they run only as batch jobs.
 - **Where**: `src/monitoring/`, `airflow/dags/`
 
 ### D-24: Airflow in local docker-compose
@@ -693,7 +713,7 @@ The API exposes these on `/metrics` (Prometheus): `ecg_prediction_latency_second
   - Remove all of the above, and delete `src/api/config.py` and `airflow/requirements.txt`.
   - Move `httpx` to the dev dependencies, because FastAPI's `TestClient` needs it and the runtime doesn't.
 - **Result**: the lockfile goes from 167 to 152 packages, with no version changes.
-- **Next (proposed)**: split the remaining dependencies into serving, training and monitoring groups, so the API image stops installing training and monitoring stacks (Evidently brings NLTK, matplotlib brings Pillow).
+- **Next**: split the remaining dependencies into serving, training and monitoring groups, so the API image stops installing training and monitoring stacks. Done in D-67.
 - **Why**: Every declared package is attack surface, alert noise and image size. Code nobody imports misleads readers about how configuration actually works (the real configuration is the env-driven `src/db.py`).
 
 ### D-65: Minor/patch upgrades land as one verified PR, checked end to end
@@ -841,7 +861,7 @@ The design review that shaped these decisions checked the first proposal against
 | Drift monitoring ignores the signal itself | Can't detect device or population shift | Signal-level drift features (D-23) |
 | Live bias check uses demographic parity | Flags real prevalence differences | Label-based checks (D-12, D-23) |
 | No API auth or rate limiting | Demo-only exposure | Add API key or IAP before persistent use (D-22) |
-| About 2 GB API image | Slower deploys and cold starts | Split serving, training and monitoring dependencies |
+| 1.24 GB API image, mostly torch (was 2.09 GB before D-67) | Image pulls on a fresh GKE node | Fine for demos; ONNX Runtime would be the next step if cold starts matter |
 | Local Terraform state | Single operator only | GCS backend when needed (D-33) |
 | Small subgroups (e.g. the under-40 test group has 7 MI and 10 HYP positives) | Noisy subgroup AUCs and fairness gap | Bootstrap confidence intervals (D-52) |
 | No PR-AUC or Brier score | Rare-class precision and calibration are partly hidden | Add to `metrics.evaluate()` (see the metrics reference) |
@@ -867,3 +887,4 @@ The design review that shaped these decisions checked the first proposal against
 | 2026-10-13 | Removed 7 unused dependencies, dead config, and a stale requirements file (167 → 152 locked packages). D-64 |
 | 2026-10-13 | Verified minor/patch upgrade (108 packages); minikube end to end caught three breaking defaults in SQLAlchemy 2.1 and MLflow 3.17. D-65; D-40 amended |
 | 2026-10-13 | Images pinned back to Python 3.11 after a Dependabot tag bump to 3.14 slipped past the major-only rule. D-66 |
+| 2026-10-14 | API image installs serving dependencies only (2.09 → 1.24 GB); in-request monitoring endpoints removed, monitoring stays batch. D-67 |

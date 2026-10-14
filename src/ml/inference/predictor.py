@@ -20,6 +20,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from src.ml.labels import SUPERCLASSES
 from src.ml.models.resnet1d import resnet18_1d
 from src.ml.preprocessing.signal import TARGET_FS, prepare_ecg
 
@@ -71,7 +72,7 @@ class ClinicalActionPredictor:
             self.device = torch.device(device)
 
         # Load model
-        self.superclasses = ['NORM', 'MI', 'STTC', 'CD', 'HYP']
+        self.superclasses = list(SUPERCLASSES)
         self.model_version = os.getenv("MODEL_VERSION", "")
         self.weights_digest = ""
         self.meta: dict = {}  # model_meta.json, when it matches the loaded weights

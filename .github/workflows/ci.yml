@@ -47,10 +47,18 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --frozen --all-extras
+        run: uv sync --frozen --all-groups
 
       - name: Run tests
         run: uv run --frozen pytest --cov=src --cov-report=term-missing
+
+      # The API image installs only the serving dependencies (D-67). Re-sync to exactly
+      # that set and rerun the suite, so serving code that quietly imports pandas, MLflow
+      # or Evidently fails here instead of in the image
+      - name: Install serving dependencies only
+        run: uv sync --frozen --no-default-groups --group dev
+      - name: Run tests with serving dependencies only
+        run: uv run --frozen --no-sync pytest -q
 
   k8s-manifests:
     runs-on: ubuntu-latest

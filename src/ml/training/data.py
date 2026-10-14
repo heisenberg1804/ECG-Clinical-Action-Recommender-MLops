@@ -23,9 +23,9 @@ import wfdb
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
+from src.ml.labels import SUPERCLASSES
 from src.ml.preprocessing.signal import N_LEADS, TARGET_SAMPLES, prepare_ecg
 
-SUPERCLASSES = ['NORM', 'MI', 'STTC', 'CD', 'HYP']
 TRAIN_FOLDS = tuple(range(1, 9))
 VAL_FOLDS = (9,)
 TEST_FOLDS = (10,)
