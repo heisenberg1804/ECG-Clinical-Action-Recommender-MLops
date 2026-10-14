@@ -24,3 +24,8 @@ output "github_deployer_sa" {
 output "budget" {
   value = "${google_billing_budget.monthly.display_name}: ${var.budget_usd} USD/month, hard cap via ${google_cloudfunctions2_function.kill_switch.name}"
 }
+
+output "tutor_secrets" {
+  description = "Add values once (see README, 'Tutor'); the tutor stays off until both exist."
+  value       = [for s in google_secret_manager_secret.tutor : s.secret_id]
+}

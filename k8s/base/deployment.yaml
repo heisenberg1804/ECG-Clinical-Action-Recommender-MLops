@@ -44,6 +44,11 @@ spec:
         envFrom:
         - configMapRef:
             name: ecg-api-config
+        # Tutor credentials and CHAT_ENABLED (D-71). Optional: without the Secret the
+        # tutor is off and everything else runs as before
+        - secretRef:
+            name: tutor
+            optional: true
         # Requests == limits: predictable on Autopilot, which bills by request
         resources:
           requests:
