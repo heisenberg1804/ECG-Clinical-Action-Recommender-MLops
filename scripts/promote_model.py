@@ -27,6 +27,9 @@ from mlflow.tracking import MlflowClient
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SUBGROUP_PREFIX = "test_auc_sex_", "test_auc_age_"
+# What the API's predictor can load. Serving changes once, at the end of the
+# experiment program (D-51); until then a ResNet-34 can't be promoted
+SERVABLE_ARCHS = {"resnet18"}
 
 
 def alias_run(client: MlflowClient, model_name: str, alias: str):
@@ -85,9 +88,11 @@ def main() -> int:
     print(f"Challenger v{chal_mv.version}: test macro AUC {chal_auc:.4f}, subgroup gap {gap:.4f}")
     print("Champion:   " + (f"v{champ_mv.version}: {champ_auc:.4f}" if champ else "none"))
 
+    arch = chal.data.params.get("arch", "resnet18")  # Older runs predate the param
     checks = {
         "performance": champ is None or chal_auc >= champ_auc + a.min_delta,
         "fairness": gap <= a.max_subgroup_gap,
+        "servable": arch in SERVABLE_ARCHS,
     }
     for name, ok in checks.items():
         print(f"  {name:<12} {'PASS' if ok else 'FAIL'}")

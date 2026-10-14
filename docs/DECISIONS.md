@@ -93,6 +93,7 @@ earlier decision, set the old one's status to `Superseded by D-xx`.
 | [D-65](#d-65-minorpatch-upgrades-land-as-one-verified-pr-checked-end-to-end) | Minor/patch upgrades land as one verified PR, checked end to end | Reproducibility | Accepted |
 | [D-66](#d-66-container-python-stays-on-the-version-ci-tests) | Container Python stays on the version CI tests | Reproducibility | Accepted |
 | [D-67](#d-67-the-api-image-installs-only-serving-dependencies-monitoring-stays-batch) | The API image installs only serving dependencies; monitoring stays batch | Serving | Accepted |
+| [D-68](#d-68-loss-and-architecture-study-pre-registered) | Loss and architecture study, pre-registered | Experiments | In progress |
 
 ---
 
@@ -651,7 +652,7 @@ The API exposes these on `/metrics` (Prometheus): `ecg_prediction_latency_second
 - **Trade-offs**: The demo keeps serving the single champion (0.910) for now.
 
 ### D-61: Long-running studies run from a pinned git worktree
-- **Status**: Accepted (2026-10-13). Tooling to follow, before the next study.
+- **Status**: Accepted (2026-10-13). Tooling: `scripts/run_study.sh` (2026-10-14, D-68).
 - **Context**: The augmentation study ran from the main working directory. While it ran, development switched branches, so seed 44 started from a different commit (`76a8208`) than seeds 42 and 43 (`62ab6da`). The training code happened to be byte-identical between the two, and every tree was clean, so the results are valid. A different branch could have silently changed the code under a multi-hour study, though.
 - **Decision**: Every study runs from a dedicated `git worktree` checked out at the study's commit, with absolute data and cache paths and the shared MLflow store.
 - **Why**: Lineage tags record *what* ran. A pinned worktree guarantees that it's *what you meant to run*, for the whole study.
@@ -684,6 +685,31 @@ The API exposes these on `/metrics` (Prometheus): `ecg_prediction_latency_second
   - The augmented ensemble is the best model so far: +0.0101 over the champion, the best calibration, and closest to the published benchmark (about 0.92–0.93).
   - Its wider subgroup gap comes largely from the noisy under-40 group (D-52) and stays well inside the gate.
 - **Decision**: Keep `--augment` on for the remaining experiments, and treat the augmented ensemble as the candidate to beat. Serving is still deferred to the end of the program (D-51).
+
+### D-68: Loss and architecture study, pre-registered
+- **Status**: In progress (2026-10-14)
+- **Context**: HYP is the weakest class (AUC 0.836, F1 about 0.48 with augmentation), and with 12% prevalence the rarest. D-47's plan has two remaining levers: the loss, and model capacity. Both are written down **before** any results, so the outcome can't shape the rule.
+- **Variants** (each with `--augment` and seeds 42/43/44, every other setting unchanged from D-62):
+
+  | Study tag | Change | Hypothesis |
+  |---|---|---|
+  | `loss-balanced` | BCE with per-class `pos_weight` = negatives / positives on folds 1–8: NORM 1.25, MI 2.90, STTC 3.08, CD 3.37, HYP 7.06 | Upweighting rare positives improves HYP |
+  | `loss-focal` | Focal loss, γ = 2 | Focusing on hard examples helps the ambiguous classes (HYP, STTC) |
+  | `arch-resnet34` | ResNet-34 ([3, 4, 6, 3] blocks) | More capacity helps, now that augmentation delays overfitting |
+
+- **Baseline**: the augmented ResNet-18 with BCE, 0.9147 ± 0.0026, compared seed by seed.
+- **Decision rule**:
+  - A variant **helps** if its mean macro AUC gain is ≥ 0.004 (the promotion margin, D-49) **and** it improves on every seed.
+  - A variant that wins on HYP AUC or F1 but not on macro AUC is reported as a trade-off, not adopted.
+  - The best variant then gets a 3-seed ensemble, compared with the augmented ensemble (0.9199).
+- **Known effect**: `pos_weight` and focal loss both distort probabilities, so ECE is expected to get worse. Thresholds are re-tuned on validation as always, so F1 isn't penalized, but calibration is compared as a cost, not ignored.
+- **Code**:
+  - `--arch` and `--loss balanced` options; `arch` is logged and recorded in `model_meta.json`.
+  - `evaluate_ensemble.py` builds each member's architecture.
+  - `promote_model.py` has a new **servable** gate: the API builds only ResNet-18 until the serving change at the end of the program (D-51), so a ResNet-34 can't be promoted into a crash.
+- **Smoke check**: on 256 records for 2 epochs, ResNet-34 gave exactly 0.500 AUC on several classes. Its eval-mode logits reached 867, against about 3 in train mode: with only 8 steps, the BatchNorm running statistics hadn't settled, so every sigmoid saturated and the outputs tied. On 2,048 records for 3 epochs it reached 0.843. A full run takes about 270 steps per epoch, so this doesn't affect the study.
+- **Run**: `scripts/run_study.sh`, which creates a worktree pinned to this PR's commit, shares the data, cache and MLflow store, and gives the worktree its own venv from the lockfile (the tooling D-61 called for). About 15 hours of local MPS compute, $0.
+- **Where**: `src/ml/training/train.py`, `src/ml/models/resnet1d.py`, `scripts/train.py`, `scripts/evaluate_ensemble.py`, `scripts/promote_model.py`, `scripts/run_study.sh`
 
 ### D-63: Dependency updates are grouped; major versions are planned migrations
 - **Status**: Accepted (2026-10-13)
@@ -888,3 +914,4 @@ The design review that shaped these decisions checked the first proposal against
 | 2026-10-13 | Verified minor/patch upgrade (108 packages); minikube end to end caught three breaking defaults in SQLAlchemy 2.1 and MLflow 3.17. D-65; D-40 amended |
 | 2026-10-13 | Images pinned back to Python 3.11 after a Dependabot tag bump to 3.14 slipped past the major-only rule. D-66 |
 | 2026-10-14 | API image installs serving dependencies only (2.09 → 1.24 GB); in-request monitoring endpoints removed, monitoring stays batch. D-67 |
+| 2026-10-14 | Loss and architecture study pre-registered (balanced BCE, focal, ResNet-34 × 3 seeds); servable-architecture promotion gate. D-68 |

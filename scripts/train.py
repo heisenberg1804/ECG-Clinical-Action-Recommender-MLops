@@ -31,7 +31,9 @@ def main() -> None:
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--patience", type=int, default=5)
-    p.add_argument("--loss", choices=["bce", "focal"], default="bce")
+    p.add_argument("--arch", choices=["resnet18", "resnet34"], default="resnet18")
+    p.add_argument("--loss", choices=["bce", "focal", "balanced"], default="bce",
+                   help="balanced = BCE with per-class pos_weight from the training split")
     p.add_argument("--augment", action="store_true", help="train-time signal augmentation")
     p.add_argument("--num-workers", type=int, default=4)
     p.add_argument("--device", default=None, help="cpu / mps / cuda (auto if omitted)")
@@ -51,6 +53,7 @@ def main() -> None:
         batch_size=a.batch_size,
         lr=a.lr,
         patience=a.patience,
+        arch=a.arch,
         loss=a.loss,
         augment=a.augment,
         num_workers=a.num_workers,

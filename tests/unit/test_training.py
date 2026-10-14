@@ -5,9 +5,12 @@
 import numpy as np
 import pandas as pd
 import pytest
+import torch
 
+from src.ml.models.resnet1d import build_model
 from src.ml.training import metrics as m
 from src.ml.training.data import SUPERCLASSES, load_metadata, split_by_fold
+from src.ml.training.train import TrainConfig, make_criterion, positive_class_weights
 
 
 @pytest.fixture
@@ -123,3 +126,33 @@ class TestAugmentation:
         out = augment_ecg(x, OnlyShift())
         assert (out[:, :100] == 0).all()  # Edge value of the start, not the end
         np.testing.assert_array_equal(out[:, 100:], x[:, :-100])
+
+
+class TestLossAndArch:
+    def test_pos_weight_is_negatives_over_positives(self):
+        labels = np.array([[1, 0], [1, 0], [1, 1], [0, 0]])  # class 0: 3 pos, class 1: 1 pos
+        assert positive_class_weights(labels).tolist() == pytest.approx([1 / 3, 3.0])
+
+    def test_pos_weight_survives_a_class_with_no_positives(self):
+        assert positive_class_weights(np.zeros((4, 1))).tolist() == [4.0]
+
+    def test_balanced_loss_upweights_rare_positives(self):
+        labels = np.array([[1, 0], [1, 0], [1, 1], [0, 0]])
+        crit = make_criterion(TrainConfig(data_dir="x", loss="balanced"), labels)
+        miss_rare = crit(torch.zeros(1, 2) - 3, torch.tensor([[0.0, 1.0]]))
+        miss_common = crit(torch.zeros(1, 2) - 3, torch.tensor([[1.0, 0.0]]))
+        assert miss_rare > miss_common
+
+    def test_unknown_loss_is_rejected(self):
+        with pytest.raises(ValueError):
+            make_criterion(TrainConfig(data_dir="x", loss="hinge"), np.zeros((2, 5)))
+
+    @pytest.mark.parametrize("arch", ["resnet18", "resnet34"])
+    def test_build_model_output_shape(self, arch):
+        model = build_model(arch, num_classes=len(SUPERCLASSES)).eval()
+        with torch.no_grad():
+            assert model(torch.zeros(2, 12, 5000)).shape == (2, len(SUPERCLASSES))
+
+    def test_unknown_arch_is_rejected(self):
+        with pytest.raises(ValueError):
+            build_model("vit", num_classes=5)
