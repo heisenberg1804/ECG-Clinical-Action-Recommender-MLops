@@ -93,7 +93,7 @@ earlier decision, set the old one's status to `Superseded by D-xx`.
 | [D-65](#d-65-minorpatch-upgrades-land-as-one-verified-pr-checked-end-to-end) | Minor/patch upgrades land as one verified PR, checked end to end | Reproducibility | Accepted |
 | [D-66](#d-66-container-python-stays-on-the-version-ci-tests) | Container Python stays on the version CI tests | Reproducibility | Accepted |
 | [D-67](#d-67-the-api-image-installs-only-serving-dependencies-monitoring-stays-batch) | The API image installs only serving dependencies; monitoring stays batch | Serving | Accepted |
-| [D-68](#d-68-loss-and-architecture-study-pre-registered) | Loss and architecture study, pre-registered | Experiments | In progress |
+| [D-68](#d-68-loss-and-architecture-study-pre-registered) | Loss and architecture study, pre-registered | Experiments | Completed: none adopted |
 | [D-69](#d-69-tutor-tools-one-frozen-set-gated-when-they-run-occlusion-re-scored-live) | Tutor tools: one frozen set, gated when they run, occlusion re-scored live | Product | Accepted (built) |
 | [D-70](#d-70-the-tutors-chat-loop-append-only-history-streamed-with-hard-spend-stops) | The tutor's chat loop: append-only history, streamed, with hard spend stops | Product | Accepted (built) |
 | [D-71](#d-71-tutor-credentials-secrets-that-outlive-the-platform-and-a-tutor-thats-off-without-them) | Tutor credentials: secrets that outlive the platform, and a tutor that's off without them | Security | Accepted |
@@ -690,7 +690,7 @@ The API exposes these on `/metrics` (Prometheus): `ecg_prediction_latency_second
 - **Decision**: Keep `--augment` on for the remaining experiments, and treat the augmented ensemble as the candidate to beat. Serving is still deferred to the end of the program (D-51).
 
 ### D-68: Loss and architecture study, pre-registered
-- **Status**: In progress (2026-10-14)
+- **Status**: Completed (2026-10-14). No variant adopted; the augmented ensemble stays the candidate.
 - **Context**: HYP is the weakest class (AUC 0.836, F1 about 0.48 with augmentation), and with 12% prevalence the rarest. D-47's plan has two remaining levers: the loss, and model capacity. Both are written down **before** any results, so the outcome can't shape the rule.
 - **Variants** (each with `--augment` and seeds 42/43/44, every other setting unchanged from D-62):
 
@@ -712,7 +712,34 @@ The API exposes these on `/metrics` (Prometheus): `ecg_prediction_latency_second
   - `promote_model.py` has a new **servable** gate: the API builds only ResNet-18 until the serving change at the end of the program (D-51), so a ResNet-34 can't be promoted into a crash.
 - **Smoke check**: on 256 records for 2 epochs, ResNet-34 gave exactly 0.500 AUC on several classes. Its eval-mode logits reached 867, against about 3 in train mode: with only 8 steps, the BatchNorm running statistics hadn't settled, so every sigmoid saturated and the outputs tied. On 2,048 records for 3 epochs it reached 0.843. A full run takes about 270 steps per epoch, so this doesn't affect the study.
 - **Run**: `scripts/run_study.sh`, which creates a worktree pinned to this PR's commit, shares the data, cache and MLflow store, and gives the worktree its own venv from the lockfile (the tooling D-61 called for). About 15 hours of local MPS compute, $0.
-- **Where**: `src/ml/training/train.py`, `src/ml/models/resnet1d.py`, `scripts/train.py`, `scripts/evaluate_ensemble.py`, `scripts/promote_model.py`, `scripts/run_study.sh`
+- **Where (code)**: `src/ml/training/train.py`, `src/ml/models/resnet1d.py`, `scripts/train.py`, `scripts/evaluate_ensemble.py`, `scripts/promote_model.py`, `scripts/run_study.sh`
+- **Result** (seeds 42/43/44; all 9 runs at `94852aa` with a clean tree, run from the pinned worktree):
+
+  | | Augmented baseline | Balanced BCE | Focal | ResNet-34 |
+  |---|---|---|---|---|
+  | Macro AUC | 0.9147 ± 0.0026 | 0.9157 ± 0.0011 | 0.9154 ± 0.0029 | 0.9132 ± 0.0010 |
+  | Per-seed Δ (42 / 43 / 44) | | +0.0045 / −0.0011 / −0.0003 | +0.0038 / −0.0033 / +0.0014 | +0.0015 / −0.0034 / −0.0025 |
+  | HYP AUC | 0.836 | **0.844** | 0.839 | 0.835 |
+  | HYP F1 | 0.473 | 0.479 | 0.467 | 0.475 |
+  | Max ECE | **0.045** | 0.194 | 0.154 | 0.040 |
+  | Female AUC | 0.905 | 0.905 | 0.905 | 0.901 |
+
+  **3-seed ensembles**:
+
+  | | Augmented ensemble | Balanced-BCE ensemble (run `a28867c9`) |
+  |---|---|---|
+  | Macro AUC | 0.9199 | 0.9212 (+0.0013) |
+  | HYP AUC / F1 | 0.844 / 0.479 | **0.852 / 0.500** |
+  | Max ECE | **0.026** | 0.194 |
+  | Subgroup gap | 0.027 | 0.026 |
+
+- **Verdict under the rule above**:
+  - **No variant helps.** None reaches the +0.004 gain, and none improves on every seed.
+  - **ResNet-34 is worse.** More capacity doesn't help at this data size, even with augmentation.
+  - **Focal loss is noise on AUC**, with lower HYP F1 and much worse calibration.
+  - **Balanced BCE is the one real trade-off.** It's the best variant on HYP (AUC +0.008; its ensemble lifts HYP F1 from 0.479 to 0.500), at the predicted cost: probabilities pushed up for rare classes make max ECE about 4× worse for single models and 7× worse for the ensemble. The tuned thresholds absorb that for F1, but the learner UI shows the percentages to students, so calibration is a product requirement, not a nicety.
+- **Decision**: Keep the augmented ensemble (0.9199) as the candidate. Don't adopt a reweighted loss as it stands.
+- **Next (proposed)**: post-hoc calibration. Fit per-class temperature (or Platt) scaling on the validation fold on top of the balanced-BCE ensemble. Calibration preserves ranking, so AUC and the HYP gain stay while ECE should return to the augmented model's level. It needs no retraining (minutes, $0), and it's the last experiment before the serving change (D-51).
 
 ### D-63: Dependency updates are grouped; major versions are planned migrations
 - **Status**: Accepted (2026-10-13)
@@ -946,7 +973,7 @@ The design review that shaped these decisions checked the first proposal against
 
 | Limitation | Impact | Planned response |
 |---|---|---|
-| HYP is weak (AUC 0.83, F1 0.46; reproduces on every seed, D-47) | Lowest-confidence class | Augmentation helps (+0.005, D-62), and the augmented ensemble reaches 0.844; loss and architecture experiments are next |
+| HYP is weak (AUC 0.83, F1 0.46; reproduces on every seed, D-47) | Lowest-confidence class | Augmentation helps (+0.005, D-62), and the augmented ensemble reaches 0.844. Balanced BCE reaches 0.852 but ruins calibration (D-68); post-hoc calibration on top of it is next |
 | About 2 AUC points lower for women and patients over 40 (systematic across seeds) | Fairness gap within the gate, but real | Per-class, per-sex analysis (e.g. sex-specific HYP voltage criteria); track per experiment |
 | The action table reads as orders | Clinically inappropriate framing | Reword as decision support (D-02) |
 | Drift monitoring ignores the signal itself | Can't detect device or population shift | Signal-level drift features (D-23) |
@@ -984,3 +1011,4 @@ The design review that shaped these decisions checked the first proposal against
 | 2026-10-14 | Tutor chat loop and endpoints on Claude Opus 5.5: SSE streaming, append-only history, refusal fallback, spend controls. D-70 |
 | 2026-10-14 | Tutor panel in the learner UI: passcode, streamed replies with progress lines and source chips; Reveal commits the read. D-60 |
 | 2026-10-14 | Tutor deployment: credentials in the foundation stack, copied into an optional k8s Secret at deploy time; off without them. D-71 |
+| 2026-10-14 | Loss and architecture study done: no variant passes the pre-registered rule; balanced BCE trades HYP (+0.008 AUC) for 7× worse calibration. D-68 |
