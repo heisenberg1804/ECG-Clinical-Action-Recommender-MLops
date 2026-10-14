@@ -91,6 +91,7 @@ earlier decision, set the old one's status to `Superseded by D-xx`.
 | [D-63](#d-63-dependency-updates-are-grouped-major-versions-are-planned-migrations) | Dependency updates are grouped; major versions are planned migrations | Reproducibility | Accepted |
 | [D-64](#d-64-declare-only-whats-used-remove-dead-dependencies-and-code) | Declare only what's used; remove dead dependencies and code | Reproducibility | Accepted |
 | [D-65](#d-65-minorpatch-upgrades-land-as-one-verified-pr-checked-end-to-end) | Minor/patch upgrades land as one verified PR, checked end to end | Reproducibility | Accepted |
+| [D-66](#d-66-container-python-stays-on-the-version-ci-tests) | Container Python stays on the version CI tests | Reproducibility | Accepted |
 
 ---
 
@@ -720,6 +721,17 @@ The API exposes these on `/metrics` (Prometheus): `ecg_prediction_latency_second
   - Commit the end-to-end check to the repo; today it's a local script.
 - **Where**: `pyproject.toml`, `uv.lock`, `docker/Dockerfile.mlflow`, `k8s/base/mlflow.yaml`, `src/ml/training/train.py`, `scripts/seed_mlflow.py`, `.github/workflows/ci.yml`
 
+### D-66: Container Python stays on the version CI tests
+- **Status**: Accepted (2026-10-13)
+- **Context**: A grouped Dependabot Docker PR moved both images from `python:3.11-slim` to `3.14-slim`. CI, local dev and the lockfile's tested environment are all 3.11, so production ran a Python nothing tested. D-63's major-only ignore didn't catch it, because Dependabot treats a `3.11` → `3.14` tag change as a semver-minor update. It didn't break anything visibly, but only because nothing exercised the difference.
+- **Decision**:
+  - Pin both images back to `python:3.11-slim`, matching D-44's "Python 3.11 everywhere".
+  - Dependabot ignores minor and major updates to the `python` image. Patch releases still arrive on every rebuild, because the `3.11-slim` tag floats.
+  - Moving to a newer Python is a planned migration: CI, `.venv`, both images and the lockfile change together.
+- **Verified**: Both images were built on 3.11.17 with the D-65 dependency set, and the full minikube end-to-end check passed on them (see D-65).
+- **Why**: The runtime should be the one the tests ran on. A Python minor release changes the interpreter and the wheels every native package is built for (torch, numpy, psycopg2), which is the exact kind of drift D-44 exists to prevent.
+- **Where**: `docker/Dockerfile.api`, `docker/Dockerfile.mlflow`, `.github/dependabot.yml`
+
 ---
 
 ## Product & UI
@@ -854,3 +866,4 @@ The design review that shaped these decisions checked the first proposal against
 | 2026-10-13 | Dependabot grouped, with automated major bumps turned off after the per-package flood and two failing upgrades. D-63 |
 | 2026-10-13 | Removed 7 unused dependencies, dead config, and a stale requirements file (167 → 152 locked packages). D-64 |
 | 2026-10-13 | Verified minor/patch upgrade (108 packages); minikube end to end caught three breaking defaults in SQLAlchemy 2.1 and MLflow 3.17. D-65; D-40 amended |
+| 2026-10-13 | Images pinned back to Python 3.11 after a Dependabot tag bump to 3.14 slipped past the major-only rule. D-66 |

@@ -44,5 +44,11 @@ updates:
     groups:
       docker-base-images:
         patterns: ["*"]
+    # The python tag is the runtime Python version, which must match CI and dev
+    # (3.11). A tag bump such as 3.11 -> 3.14 counts as "minor" and slipped past the
+    # major-only rule above, so changing it is a planned migration too (D-66)
+    ignore:
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     commit-message:
       prefix: "build(deps)"
