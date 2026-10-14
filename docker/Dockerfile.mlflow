@@ -4,6 +4,8 @@
 # Every package that's also in uv.lock is installed at its locked version, so the
 # server runs exactly the MLflow/SQLAlchemy/Alembic the training client uses.
 # (An unconstrained install pulled SQLAlchemy 2.1, which MLflow 3.8 can't import.)
+# The backend URI names the driver (postgresql+psycopg2://): since SQLAlchemy 2.1 a
+# bare postgresql:// means psycopg 3, which this image doesn't install.
 FROM python:3.14-slim
 
 COPY --from=ghcr.io/astral-sh/uv:0.9.18 /uv /bin/uv
@@ -24,4 +26,4 @@ WORKDIR /home/mlflow
 EXPOSE 5000
 
 # Configured entirely through env vars so local and GKE share one manifest
-CMD ["sh", "-c", "exec mlflow server --host 0.0.0.0 --port 5000 --workers ${MLFLOW_WORKERS:-2} --backend-store-uri \"postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:5432/${DB_NAME}\" --artifacts-destination \"${ARTIFACTS_DESTINATION}\" --serve-artifacts --allowed-hosts \"${MLFLOW_ALLOWED_HOSTS}\""]
+CMD ["sh", "-c", "exec mlflow server --host 0.0.0.0 --port 5000 --workers ${MLFLOW_WORKERS:-2} --backend-store-uri \"postgresql+psycopg2://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:5432/${DB_NAME}\" --artifacts-destination \"${ARTIFACTS_DESTINATION}\" --serve-artifacts --allowed-hosts \"${MLFLOW_ALLOWED_HOSTS}\""]

@@ -90,6 +90,7 @@ earlier decision, set the old one's status to `Superseded by D-xx`.
 | [D-62](#d-62-train-time-augmentation-is-a-consistent-but-modest-gain) | Train-time augmentation is a consistent but modest gain | Experiments | Accepted |
 | [D-63](#d-63-dependency-updates-are-grouped-major-versions-are-planned-migrations) | Dependency updates are grouped; major versions are planned migrations | Reproducibility | Accepted |
 | [D-64](#d-64-declare-only-whats-used-remove-dead-dependencies-and-code) | Declare only what's used; remove dead dependencies and code | Reproducibility | Accepted |
+| [D-65](#d-65-minorpatch-upgrades-land-as-one-verified-pr-checked-end-to-end) | Minor/patch upgrades land as one verified PR, checked end to end | Reproducibility | Accepted |
 
 ---
 
@@ -512,6 +513,7 @@ The API exposes these on `/metrics` (Prometheus): `ecg_prediction_latency_second
   - An unconstrained install pulled SQLAlchemy 2.1, which MLflow 3.8 can't import.
   - The server's internal client fell back to `./mlruns` in an unwritable `/` when registering models.
   - MLflow 3 matches Host headers including the port.
+- **Amended (D-65)**: now MLflow 3.17 with an explicit `postgresql+psycopg2://` URI, and server job execution turned off.
 - **Where**: `docker/Dockerfile.mlflow`, `k8s/base/mlflow.yaml`
 
 ### D-41: Measured resource sizing; requests == limits
@@ -693,6 +695,31 @@ The API exposes these on `/metrics` (Prometheus): `ecg_prediction_latency_second
 - **Next (proposed)**: split the remaining dependencies into serving, training and monitoring groups, so the API image stops installing training and monitoring stacks (Evidently brings NLTK, matplotlib brings Pillow).
 - **Why**: Every declared package is attack surface, alert noise and image size. Code nobody imports misleads readers about how configuration actually works (the real configuration is the env-driven `src/db.py`).
 
+### D-65: Minor/patch upgrades land as one verified PR, checked end to end
+- **Status**: Accepted (2026-10-13)
+- **Context**: The grouped Dependabot PR (D-63) failed CI, so the minor/patch upgrade was done by hand: `uv lock --upgrade` upgraded 108 packages (154 → 160 locked), including FastAPI 0.127 → 0.143, Starlette 0.50 → 1.8, torch 2.10 → 2.14, MLflow 3.16 → 3.17, SQLAlchemy 2.0 → 2.1 and uvicorn 0.40 → 0.54. Unit tests passed straight away. Only the minikube end-to-end run found the next three breakages:
+  - **SQLAlchemy 2.1 changed the default Postgres driver.** A bare `postgresql://` URI now means psycopg 3. The MLflow server only has psycopg2, so it crash-looped on `import psycopg`.
+  - **MLflow 3.17 serializes PyTorch models as `pt2` by default.** `pt2` requires an `input_example`, so `train.py` and `seed_mlflow.py` would both have raised at `log_model`. Supplying an example wouldn't help, because a traced graph drops `forward_features`/`forward_head`, which Grad-CAM calls.
+  - **The MLflow 3.17 server starts a job runner plus 7 huey consumers** for GenAI features (about 650 MiB), and was OOM-killed at its 1 GiB limit.
+- **Decision**:
+  - Upgrade all minor/patch versions in one PR.
+  - `prometheus-fastapi-instrumentator>=8` (7.x crashes on FastAPI 0.143 routers).
+  - `pandas<3` until the planned pandas 3 migration (D-63).
+  - The MLflow backend URI names its driver: `postgresql+psycopg2://`.
+  - `log_model(..., serialization_format="pickle")`. Pickle runs code on load, which is acceptable because we only ever load from our own registry.
+  - `MLFLOW_SERVER_ENABLE_JOB_EXECUTION=false`: idle memory drops from 812 to 405 MiB, so the 1 GiB limit from D-41 stands.
+  - ruff 0.14 → 0.17 in CI.
+- **Verified**:
+  - **Tests and lint:** 77 tests pass and lint is clean.
+  - **Bank stability:** with torch 2.14, the case bank's stored probabilities still match a fresh run (max |Δp| 0.00013, no change in predicted labels).
+  - **Local MLflow DB:** it migrated to 3.17; a backup was kept.
+  - **minikube end to end:** API ready, predict with an explanation, cases, /metrics, a prediction row in Postgres. The real ResNet-18 was registered with a champion alias, and after an MLflow restart the alias still resolved and the model loaded with `forward_features`. No pod restarts.
+- **Why**: Unit tests cover our code, not the integration seams (driver selection, serialization defaults, server memory), and those seams are where minor versions broke us. Verifying the whole set once costs less than verifying 115 bumps one at a time.
+- **Follow-ups**:
+  - Starlette now warns that `TestClient` with httpx is deprecated in favour of httpx2: migrate the tests before it's removed.
+  - Commit the end-to-end check to the repo; today it's a local script.
+- **Where**: `pyproject.toml`, `uv.lock`, `docker/Dockerfile.mlflow`, `k8s/base/mlflow.yaml`, `src/ml/training/train.py`, `scripts/seed_mlflow.py`, `.github/workflows/ci.yml`
+
 ---
 
 ## Product & UI
@@ -826,3 +853,4 @@ The design review that shaped these decisions checked the first proposal against
 | 2026-10-13 | Learner UI v1a shipped: 281-case bank, case API, model card, 12-lead viewer, read/reveal/attention loop. D-53, D-54, D-55, D-60 updated |
 | 2026-10-13 | Dependabot grouped, with automated major bumps turned off after the per-package flood and two failing upgrades. D-63 |
 | 2026-10-13 | Removed 7 unused dependencies, dead config, and a stale requirements file (167 → 152 locked packages). D-64 |
+| 2026-10-13 | Verified minor/patch upgrade (108 packages); minikube end to end caught three breaking defaults in SQLAlchemy 2.1 and MLflow 3.17. D-65; D-40 amended |

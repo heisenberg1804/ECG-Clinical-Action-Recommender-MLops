@@ -83,7 +83,9 @@ def main() -> int:
 
     # Register under the target run so the registry links back to the real run
     with mlflow.start_run(run_id=target_run_id):
-        info = mlflow.pytorch.log_model(model, name="model", registered_model_name=a.model_name)
+        # Pickle keeps forward_features/forward_head for Grad-CAM (see train.py)
+        info = mlflow.pytorch.log_model(model, name="model", serialization_format="pickle",
+                                        registered_model_name=a.model_name)
     dst.set_registered_model_alias(a.model_name, a.alias, info.registered_model_version)
     print(f"Registered {a.model_name} v{info.registered_model_version} -> @{a.alias}")
     return 0

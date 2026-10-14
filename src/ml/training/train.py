@@ -265,8 +265,10 @@ def train(cfg: TrainConfig) -> dict:
         example = np.zeros((1, 12, 5000), dtype=np.float32)
         with torch.no_grad():
             signature = infer_signature(example, model_cpu(torch.from_numpy(example)).numpy())
+        # Pickle, not MLflow 3.17's default pt2: a traced graph drops forward_features /
+        # forward_head, which Grad-CAM needs. We only ever load our own registry.
         info = mlflow.pytorch.log_model(
-            model_cpu, name="model", signature=signature,
+            model_cpu, name="model", signature=signature, serialization_format="pickle",
             registered_model_name=cfg.registered_model,
         )
         if cfg.registered_model and info.registered_model_version:

@@ -21,7 +21,7 @@ jobs:
           python-version: '3.11'
 
       - name: Ruff
-        run: uvx ruff@0.14.10 check src tests airflow infra
+        run: uvx ruff@0.17.0 check src tests airflow infra
 
   test:
     runs-on: ubuntu-latest

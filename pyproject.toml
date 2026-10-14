@@ -13,14 +13,14 @@ dependencies = [
     "pydantic>=2.5.0",
     "asyncpg>=0.29.0",
     "numpy>=1.26.0",
-    "pandas>=2.1.0",
+    "pandas>=2.1.0,<3",  # pandas 3 (Arrow string dtype) breaks our code: planned migration (D-63)
     "scipy>=1.11.0",
     "wfdb>=4.1.0",
     "torch>=2.1.0",
     "mlflow>=2.9.0",
     "tqdm>=4.66.0",
     "prometheus-client>=0.19.0",
-    "prometheus-fastapi-instrumentator>=7.0.0",
+    "prometheus-fastapi-instrumentator>=8.0.0",  # 7.x crashes on FastAPI >= 0.143 routers
     "evidently>=0.4.0",
 ]
 
