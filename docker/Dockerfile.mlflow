@@ -6,7 +6,8 @@
 # (An unconstrained install pulled SQLAlchemy 2.1, which MLflow 3.8 can't import.)
 # The backend URI names the driver (postgresql+psycopg2://): since SQLAlchemy 2.1 a
 # bare postgresql:// means psycopg 3, which this image doesn't install.
-FROM python:3.14-slim
+# Python matches CI and local dev (3.11). Dependabot doesn't bump it (D-66)
+FROM python:3.11-slim
 
 COPY --from=ghcr.io/astral-sh/uv:0.9.18 /uv /bin/uv
 COPY pyproject.toml uv.lock /tmp/lock/
