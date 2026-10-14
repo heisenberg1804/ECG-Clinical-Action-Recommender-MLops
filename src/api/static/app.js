@@ -246,6 +246,136 @@ function ModelCard({ card }) {
     </details>`;
 }
 
+// ---------------------------------------------------------------- Tutor (D-56 to D-58)
+
+const PROMPTS = {
+  reading: ["Where should I start?", "Help me work out the rate", "What's the axis?"],
+  committed: ["What did I miss?", "Where did the model look?",
+              "Cover the inferior leads: does the model change its mind?"],
+};
+
+// Server-sent events from a POST: fetch's stream, split on blank lines
+async function* sseEvents(response) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) return;
+    buf += decoder.decode(value, { stream: true });
+    let cut;
+    while ((cut = buf.indexOf("\n\n")) >= 0) {
+      const chunk = buf.slice(0, cut);
+      buf = buf.slice(cut + 2);
+      if (chunk.startsWith("data: ")) yield JSON.parse(chunk.slice(6));
+    }
+  }
+}
+
+// Just enough Markdown for tutor replies: paragraphs, "- " lists, **bold**. Text stays text
+function Rich({ text }) {
+  const inline = (line) => line.split(/(\*\*[^*]+\*\*)/).map((part) =>
+    part.startsWith("**") && part.endsWith("**") ? html`<b>${part.slice(2, -2)}</b>` : part);
+  return text.split(/\n{2,}/).map((block) => {
+    const lines = block.split("\n");
+    return lines.every((l) => /^\s*[-*] /.test(l))
+      ? html`<ul>${lines.map((l) => html`<li>${inline(l.replace(/^\s*[-*] /, ""))}</li>`)}</ul>`
+      : html`<p>${lines.map((l, i) => html`${i > 0 && html`<br />`}${inline(l)}`)}</p>`;
+  });
+}
+
+function TutorPanel({ caseId, session, setSession, passcode, setPasscode }) {
+  const [items, setItems] = useState([]);       // What the student sees
+  const [history, setHistory] = useState([]);   // What the API needs back next turn
+  const [draft, setDraft] = useState("");
+  const [pass, setPass] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const endRef = useRef(null);
+
+  useEffect(() => { setItems([]); setHistory([]); setError(null); }, [caseId]);
+  useEffect(() => { endRef.current?.scrollIntoView({ block: "nearest" }); }, [items]);
+  useEffect(() => {
+    if (!passcode || session) return;
+    api("/tutor/session", { method: "POST", headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ case_id: caseId, passcode }) })
+      .then(setSession)
+      .catch((e) => { setError(e.message); if (/passcode/i.test(e.message)) setPasscode(null); });
+  }, [caseId, passcode, session]);
+
+  const update = (fn) => setItems((xs) => xs.map((x, i) => (i === xs.length - 1 ? fn(x) : x)));
+
+  const send = async (text) => {
+    if (!text.trim() || busy || !session) return;
+    setBusy(true); setError(null); setDraft("");
+    setItems((xs) => [...xs, { who: "you", text }, { who: "tutor", text: "", progress: "", sources: [] }]);
+    try {
+      const r = await fetch("/tutor/chat", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: session.token, history, message: text }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `${r.status}`);
+      for await (const ev of sseEvents(r)) {
+        if (ev.type === "text") update((x) => ({ ...x, text: x.text + ev.text, progress: "" }));
+        else if (ev.type === "progress") update((x) => ({ ...x, progress: x.progress + ev.text }));
+        else if (ev.type === "tool") update((x) => ({ ...x, sources: [...x.sources, ev] }));
+        else if (ev.type === "notice") update((x) => ({ ...x, notice: ev.text }));
+        else if (ev.type === "error") throw new Error(ev.message);
+        else if (ev.type === "done") {
+          setHistory((h) => [...h, ...ev.append]);
+          setSession((sess) => ({ ...sess, token: ev.token }));
+        }
+      }
+    } catch (e) {
+      setError(e.message);
+    } finally { setBusy(false); }
+  };
+
+  if (!passcode) return html`
+    <section class="panel tutor">
+      <h2>Tutor</h2>
+      <p class="muted">An AI tutor that can read this case's measurements and question the model
+        with you. Enter the demo passcode to start.</p>
+      <form class="row" onSubmit=${(e) => { e.preventDefault(); setPasscode(pass); }}>
+        <input type="password" placeholder="Passcode" value=${pass} autocomplete="off"
+          onInput=${(e) => setPass(e.target.value)} />
+        <button class="primary" disabled=${!pass}>Start</button>
+      </form>
+      ${error && html`<p class="bad small">${error}</p>`}
+    </section>`;
+
+  const phase = session?.phase || "reading";
+  return html`
+    <section class="panel tutor">
+      <h2>Tutor <span class="muted small">${phase === "reading"
+        ? "· answer locked until you reveal" : "· answer unlocked"}</span></h2>
+      <div class="transcript">
+        ${items.length === 0 && html`<p class="muted small">Ask anything about this tracing.
+          It won't give the answer away before you commit your read.</p>`}
+        ${items.map((m) => html`
+          <div class=${"msg " + m.who}>
+            ${m.who === "tutor" && m.progress && html`<p class="progress">${m.progress}</p>`}
+            ${m.text ? html`<${Rich} text=${m.text} />` : m.who === "tutor" && !m.progress && busy
+              && html`<p class="progress">Thinking…</p>`}
+            ${m.notice && html`<p class="muted small">${m.notice}</p>`}
+            ${m.sources?.length > 0 && html`<div class="sources">${m.sources.map((t) => html`
+              <span class=${"source" + (t.is_error ? " err" : "")} title=${t.name}>${t.source}</span>`)}</div>`}
+          </div>`)}
+        <div ref=${endRef}></div>
+      </div>
+      ${error && html`<p class="bad small">${error}</p>`}
+      <div class="chips">${PROMPTS[phase].map((q) => html`
+        <button class="chip small" disabled=${busy || !session} onClick=${() => send(q)}>${q}</button>`)}</div>
+      <form class="row" onSubmit=${(e) => { e.preventDefault(); send(draft); }}>
+        <input placeholder="Ask the tutor…" value=${draft} maxlength="2000" disabled=${!session}
+          onInput=${(e) => setDraft(e.target.value)} />
+        <button class="primary" disabled=${busy || !draft.trim() || !session}>Send</button>
+      </form>
+      <p class="muted small">Every claim about this case comes from a tool result (the chips).
+        General ECG knowledge is labelled as such. Not medical advice.</p>
+    </section>`;
+}
+
 function App() {
   const [cases, setCases] = useState(null);
   const [idx, setIdx] = useState(store.get("ecg.caseIndex", 0));
@@ -258,6 +388,11 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [card, setCard] = useState(null);
   const [score, setScore] = useState(store.get("ecg.score", {}));  // case_id -> exact match?
+  const [tutorOn, setTutorOn] = useState(false);
+  const [passcode, setPasscode] = useState(null);  // In memory only: re-entered on reload
+  const [tutorSession, setTutorSession] = useState(null);
+
+  useEffect(() => { api("/tutor/status").then((s) => setTutorOn(s.enabled)).catch(() => {}); }, []);
 
   useEffect(() => { api("/model/card").then(setCard).catch(() => {}); }, []);
 
@@ -266,7 +401,7 @@ function App() {
     if (!cases) return;
     const i = Math.min(idx, cases.cases.length - 1);
     store.set("ecg.caseIndex", i);
-    setEcg(null); setResult(null); setFocus(null); setAttention(null);
+    setEcg(null); setResult(null); setFocus(null); setAttention(null); setTutorSession(null);
     const id = cases.cases[i].case_id;
     setAnswer(store.get(`ecg.answer.${id}`, []));
     api(`/cases/${id}`).then(setEcg).catch((e) => setError(e.message));
@@ -285,6 +420,11 @@ function App() {
         body: JSON.stringify({ answer }),
       });
       setResult(r);
+      if (tutorSession) {  // Committing the read unlocks the tutor's answer tools
+        api("/tutor/commit", { method: "POST", headers: { "Content-Type": "application/json" },
+                               body: JSON.stringify({ token: tutorSession.token, answer }) })
+          .then(setTutorSession).catch(() => {});
+      }
       setFocus(r.model.predicted[0] || r.primary_label);  // Start where the model was most sure
       store.set(`ecg.answer.${ecg.case_id}`, answer);
       if (!(ecg.case_id in score)) {  // Score each case once: the first committed read counts
@@ -312,6 +452,8 @@ function App() {
       ${ecg && !result && html`<${ReadPanel} answer=${answer} setAnswer=${setAnswer} onReveal=${reveal} busy=${busy} />`}
       ${result && card && html`<${ResultPanel} result=${result} thresholds=${card.thresholds}
         focus=${focus} setFocus=${setFocus} />`}
+      ${ecg && tutorOn && html`<${TutorPanel} caseId=${ecg.case_id} session=${tutorSession}
+        setSession=${setTutorSession} passcode=${passcode} setPasscode=${setPasscode} />`}
       ${card && html`<${ModelCard} card=${card} />`}
     <//>`;
 }
