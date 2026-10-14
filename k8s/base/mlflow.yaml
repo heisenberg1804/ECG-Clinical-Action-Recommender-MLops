@@ -63,6 +63,11 @@ spec:
           value: http://localhost:5000
         - name: MLFLOW_WORKERS  # One worker is ample for a team tracking server
           value: "1"
+        # MLflow 3.17 starts a job runner and 7 huey consumers (~650 MiB) for GenAI
+        # features (scorers, prompt optimization) this project doesn't use; with them
+        # the pod was OOM-killed at 1 GiB
+        - name: MLFLOW_SERVER_ENABLE_JOB_EXECUTION
+          value: "false"
         volumeMounts:
         - name: artifacts
           mountPath: /mlflow/artifacts
